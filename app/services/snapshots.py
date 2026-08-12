@@ -157,6 +157,14 @@ def _collect_sibling_markets(db: Session, provider, ref) -> list[SiblingMarket]:
         logger.warning("не удалось получить соседние рынки для %s", ref.external_id)
         return []
 
+    settings = get_settings()
+    book_types = {
+        t.strip().upper()
+        for t in settings.polymarket_sibling_book_types.split(",")
+        if t.strip()
+    }
+    books_left = settings.polymarket_sibling_book_limit
+
     siblings: list[SiblingMarket] = []
     for sibling_ref in refs:
         try:
@@ -167,6 +175,21 @@ def _collect_sibling_markets(db: Session, provider, ref) -> list[SiblingMarket]:
                 continue
             yes_price = values[0]
             no_price = values[1] if len(values) > 1 else round(1.0 - yes_price, 4)
+
+            # Стакан тянем только для торгуемых типов и в пределах лимита:
+            # без него рынок остаётся видимым, но неисполнимым.
+            yes_book = no_book = SnapshotBook()
+            yes_ask = no_ask = None
+            if sibling_ref.market_type in book_types and books_left > 0:
+                try:
+                    quote = provider.get_quote(sibling_ref)
+                    yes_book = _to_book(quote.yes_bids, quote.yes_asks)
+                    no_book = _to_book(quote.no_bids, quote.no_asks)
+                    yes_ask, no_ask = yes_book.best_ask, no_book.best_ask
+                    books_left -= 1
+                except Exception:  # noqa: BLE001 — рынок останется без стакана
+                    logger.warning("нет стакана для рынка %s", sibling_ref.external_id)
+
             siblings.append(
                 SiblingMarket(
                     market_id=row.id,
@@ -177,6 +200,10 @@ def _collect_sibling_markets(db: Session, provider, ref) -> list[SiblingMarket]:
                     no_label=sibling_ref.no_label,
                     yes_price=min(max(yes_price, 0.0), 1.0),
                     no_price=min(max(no_price, 0.0), 1.0),
+                    yes_best_ask=yes_ask,
+                    no_best_ask=no_ask,
+                    yes_book=yes_book,
+                    no_book=no_book,
                     liquidity_usdc=float(
                         (sibling_ref.raw or {}).get("liquidityNum")
                         or (sibling_ref.raw or {}).get("liquidity")

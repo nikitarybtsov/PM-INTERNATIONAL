@@ -219,6 +219,49 @@ def test_sibling_market_is_not_executed_on_wrong_book():
     assert "Games Total" in reason.message
 
 
+def test_sibling_with_book_executes_on_its_own_prices():
+    """Со стаканом соседний рынок торгуется, и цена берётся ЕГО стакана."""
+    from app.constants import RiskVerdict
+    from app.services.risk_engine import RiskContext, evaluate
+
+    snapshot = snapshot_with_siblings()
+    totals_book = SnapshotBook(
+        bids=[BookLevel(price=0.44, size=3000)],
+        asks=[BookLevel(price=0.46, size=3000)],
+    )
+    totals = snapshot.sibling_markets[0].model_copy(
+        update={"yes_book": totals_book, "no_book": totals_book, "yes_best_ask": 0.46}
+    )
+    snapshot = snapshot.model_copy(
+        update={"sibling_markets": [totals, snapshot.sibling_markets[1]]}
+    )
+
+    ctx = RiskContext(
+        action=Action.BUY_YES,
+        stake_usdc=50.0,
+        max_acceptable_price=0.50,
+        snapshot=snapshot,
+        cash_balance=1000.0,
+        available_balance=1000.0,
+        total_exposure=0.0,
+        market_exposure=0.0,
+        target_market_id=11,
+    )
+
+    outcome = evaluate(ctx)
+
+    assert outcome.verdict in (RiskVerdict.APPROVED, RiskVerdict.ADJUSTED)
+    # 0.46 — ask тотала; ask основного рынка 0.70, и он не должен применяться
+    assert outcome.expected_avg_price == pytest.approx(0.46)
+
+
+def test_book_lookup_falls_back_to_empty_for_unknown_market():
+    snapshot = snapshot_with_siblings()
+    assert snapshot.book_for("YES", 999).asks == []
+    assert snapshot.is_executable_market(999) is False
+    assert snapshot.is_executable_market(None) is True
+
+
 def test_main_market_still_executes_normally():
     """Запрет касается только соседних рынков — основной работает как раньше."""
     from app.constants import RiskVerdict

@@ -92,6 +92,17 @@ class SiblingMarket(BaseModel):
     no_best_ask: float | None = None
     liquidity_usdc: float = 0.0
 
+    #: Стаканы. Заполняются только для рынков, на которых разрешено исполнение:
+    #: без заявок невозможно посчитать среднюю цену и проскальзывание, а значит
+    #: и купить. Пустые книги означают «рынок виден, но ставить нельзя».
+    yes_book: SnapshotBook = Field(default_factory=SnapshotBook)
+    no_book: SnapshotBook = Field(default_factory=SnapshotBook)
+
+    @property
+    def is_executable(self) -> bool:
+        """Есть ли стакан, по которому можно исполнить заявку."""
+        return bool(self.yes_book.asks or self.no_book.asks)
+
     @property
     def spread(self) -> float | None:
         if self.yes_best_ask is None:
@@ -153,8 +164,25 @@ class MarketSnapshot(BaseModel):
         book = self.yes_book if outcome == "YES" else self.no_book
         return book.best_bid
 
-    def book_for(self, outcome: str) -> SnapshotBook:
+    def book_for(self, outcome: str, market_id: int | None = None) -> SnapshotBook:
+        """Стакан исхода. По умолчанию — основной рынок раунда.
+
+        Для выбранного участником соседнего рынка возвращается ЕГО стакан:
+        исполнять заявку по чужим заявкам нельзя — купится не то и не по той цене.
+        """
+        if market_id is not None and market_id != self.market.market_id:
+            sibling = self.sibling(market_id)
+            if sibling is not None:
+                return sibling.yes_book if outcome == "YES" else sibling.no_book
+            return SnapshotBook()
         return self.yes_book if outcome == "YES" else self.no_book
+
+    def is_executable_market(self, market_id: int | None) -> bool:
+        """Можно ли исполнить заявку на этом рынке — есть ли у нас его стакан."""
+        if market_id is None or market_id == self.market.market_id:
+            return True
+        sibling = self.sibling(market_id)
+        return sibling is not None and sibling.is_executable
 
     def market_probability(self, outcome: str, market_id: int | None = None) -> float:
         """Цена исхода. По умолчанию — основной рынок раунда.

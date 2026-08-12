@@ -146,13 +146,12 @@ def _evaluate_buy(ctx: RiskContext, reasons: list[RiskReason]) -> RiskOutcome:
     limits = ctx.limits
     outcome = "YES" if ctx.action == Action.BUY_YES else "NO"
 
-    # Снимок несёт полный стакан только по основному рынку раунда; у соседних
-    # рынков есть цена и ликвидность, но нет заявок. Исполнять по чужому стакану
-    # нельзя: участник просил тотал, а купил бы победителя серии по другой цене.
-    # Пока стакан выбранного рынка не подтягивается, такие заявки отклоняются.
+    # Заявка исполняется по стакану ВЫБРАННОГО рынка. Для рынков без стакана
+    # (снимок тянет их не для всех типов) исполнение невозможно: без заявок
+    # нельзя посчитать среднюю цену и проскальзывание.
     target = ctx.target_market_id
-    if target is not None and target != ctx.snapshot.market.market_id:
-        sibling = ctx.snapshot.sibling(target)
+    if not ctx.snapshot.is_executable_market(target):
+        sibling = ctx.snapshot.sibling(target) if target is not None else None
         name = sibling.question if sibling else f"#{target}"
         reasons.append(
             RiskReason(
@@ -164,7 +163,7 @@ def _evaluate_buy(ctx: RiskContext, reasons: list[RiskReason]) -> RiskOutcome:
         )
         return _reject(ctx.action, reasons)
 
-    book = ctx.snapshot.book_for(outcome)
+    book = ctx.snapshot.book_for(outcome, target)
     best_ask = book.best_ask
 
     if best_ask is None or not book.asks:
@@ -308,7 +307,7 @@ def _evaluate_sell(ctx: RiskContext, reasons: list[RiskReason]) -> RiskOutcome:
         return _reject(ctx.action, reasons)
 
     outcome = ctx.sell_outcome or "YES"
-    book = ctx.snapshot.book_for(outcome)
+    book = ctx.snapshot.book_for(outcome, ctx.target_market_id)
     if not book.bids:
         reasons.append(RiskReason("no_liquidity", "пустой стакан bids для продажи", "reject"))
         return _reject(ctx.action, reasons)

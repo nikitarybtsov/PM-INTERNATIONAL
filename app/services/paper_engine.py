@@ -98,7 +98,10 @@ def execute(
             f"решение #{decision.id} уже исполнено ордером #{existing.id}"
         )
 
-    market_id = snapshot_row.market_id
+    # Ордер и позиция принадлежат тому рынку, который выбрал участник: он мог
+    # поставить на тотал или фору, а не на исход серии. Иначе позиция окажется
+    # на чужом рынке и рассчитается по чужому результату.
+    market_id = (decision.payload or {}).get("target_market_id") or snapshot_row.market_id
     participant_id = decision.participant_id
     seed = execution_seed(decision.round_id, participant_id, market_id, snapshot_row.payload_hash)
 
@@ -165,7 +168,9 @@ def _execute_buy(
     db: Session, order: SimulatedOrder, risk: RiskOutcome, snapshot: MarketSnapshot
 ) -> ExecutionResult:
     outcome = risk.outcome or "YES"
-    book = snapshot.book_for(outcome)
+    # Стакан того рынка, на который ставит участник, — order.market_id уже
+    # указывает на выбранный им рынок.
+    book = snapshot.book_for(outcome, order.market_id)
     budget = risk.approved_stake
 
     # резервируем средства на время исполнения
@@ -283,7 +288,7 @@ def _execute_sell(
         db.flush()
         return ExecutionResult(order, 0.0, 0.0, 0.0, 0.0, OrderStatus.REJECTED)
 
-    book = snapshot.book_for(outcome)
+    book = snapshot.book_for(outcome, order.market_id)
     size_to_sell = round_size(min(risk.approved_size, position.size))
     walk = walk_sell(book.bids, size_to_sell, None)
     if walk.is_empty:
