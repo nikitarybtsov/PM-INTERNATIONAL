@@ -306,6 +306,13 @@ def request_ai_decisions(db: Session, round_row: Round, *, parallel: bool = True
     if not pending:
         return []
 
+    # Модели думают минутами. Всё это время открытая транзакция держала бы
+    # SQLite заблокированной, и любая параллельная запись — например, фиксация
+    # снимка по другому матчу — падала бы с «database is locked», а оператор
+    # видел бы Internal Server Error. Поэтому отпускаем базу до вызова и
+    # берём заново после: снимок уже прочитан и в памяти, он неизменяем.
+    db.commit()
+
     def _run(item):
         participant, view = item
         adapter = get_participant_adapter(participant.key)

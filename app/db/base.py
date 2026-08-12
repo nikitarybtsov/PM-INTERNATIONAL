@@ -24,7 +24,10 @@ _SessionLocal: sessionmaker[Session] | None = None
 def _make_engine(url: str) -> Engine:
     kwargs: dict[str, object] = {"future": True, "pool_pre_ping": True}
     if url.startswith("sqlite"):
-        kwargs["connect_args"] = {"check_same_thread": False}
+        # timeout — сколько ждать освобождения блокировки, прежде чем сдаться.
+        # Умолчание 5 секунд: анализ моделей идёт минутами, и параллельная
+        # запись падала с «database is locked», а оператор видел 500.
+        kwargs["connect_args"] = {"check_same_thread": False, "timeout": 60}
         # каталог для файла БД
         if ":///" in url and not url.endswith(":memory:"):
             db_path = Path(url.split(":///", 1)[1])
@@ -34,9 +37,13 @@ def _make_engine(url: str) -> Engine:
     if url.startswith("sqlite"):
 
         @event.listens_for(engine, "connect")
-        def _fk_on(dbapi_connection, _record):  # pragma: no cover - тривиально
+        def _sqlite_pragmas(dbapi_connection, _record):  # pragma: no cover - тривиально
             cur = dbapi_connection.cursor()
             cur.execute("PRAGMA foreign_keys=ON")
+            # WAL: читатели не блокируют писателя и наоборот. Без него любой
+            # фоновый анализ вешал панель целиком.
+            cur.execute("PRAGMA journal_mode=WAL")
+            cur.execute("PRAGMA busy_timeout=60000")
             cur.close()
 
     return engine
