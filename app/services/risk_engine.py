@@ -46,6 +46,8 @@ class RiskContext:
     market_exposure: float
     position_size: float = 0.0
     position_avg_price: float = 0.0
+    #: Рынок, выбранный участником. None — основной рынок раунда.
+    target_market_id: int | None = None
     sell_outcome: str = "YES"
     snapshot_stale: bool = False
     stale_reason: str | None = None
@@ -143,6 +145,25 @@ def evaluate(ctx: RiskContext) -> RiskOutcome:  # noqa: C901 — линейны�
 def _evaluate_buy(ctx: RiskContext, reasons: list[RiskReason]) -> RiskOutcome:
     limits = ctx.limits
     outcome = "YES" if ctx.action == Action.BUY_YES else "NO"
+
+    # Снимок несёт полный стакан только по основному рынку раунда; у соседних
+    # рынков есть цена и ликвидность, но нет заявок. Исполнять по чужому стакану
+    # нельзя: участник просил тотал, а купил бы победителя серии по другой цене.
+    # Пока стакан выбранного рынка не подтягивается, такие заявки отклоняются.
+    target = ctx.target_market_id
+    if target is not None and target != ctx.snapshot.market.market_id:
+        sibling = ctx.snapshot.sibling(target)
+        name = sibling.question if sibling else f"#{target}"
+        reasons.append(
+            RiskReason(
+                "market_not_executable",
+                f"рынок «{name}» доступен для анализа, но не для исполнения: "
+                f"в snapshot нет его стакана",
+                "reject",
+            )
+        )
+        return _reject(ctx.action, reasons)
+
     book = ctx.snapshot.book_for(outcome)
     best_ask = book.best_ask
 
@@ -390,6 +411,7 @@ def build_context(
         market_exposure=pf.exposure(db, participant.id, snapshot_row.market_id),
         position_size=position_size,
         position_avg_price=position_avg,
+        target_market_id=(decision.payload or {}).get("target_market_id"),
         sell_outcome=sell_outcome,
         snapshot_stale=stale,
         stale_reason=stale_reason,

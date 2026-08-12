@@ -186,6 +186,59 @@ def test_polymarket_lists_event_markets():
     assert "3" not in ids       # закрытый рынок исключён
 
 
+def test_sibling_market_is_not_executed_on_wrong_book():
+    """Ставка на тотал не должна исполняться по стакану победителя серии.
+
+    Снимок несёт стакан только основного рынка. Если исполнить по нему заявку
+    на тотал, участник купит не то, что просил, и по другой цене — в боевом
+    режиме за реальные деньги. Пока стакан выбранного рынка не подтягивается,
+    такие заявки отклоняются.
+    """
+    from app.constants import RiskVerdict
+    from app.services.risk_engine import RiskContext, evaluate
+
+    snapshot = snapshot_with_siblings()
+    ctx = RiskContext(
+        action=Action.BUY_YES,
+        stake_usdc=50.0,
+        max_acceptable_price=0.47,
+        snapshot=snapshot,
+        cash_balance=1000.0,
+        available_balance=1000.0,
+        total_exposure=0.0,
+        market_exposure=0.0,
+        target_market_id=11,  # тотал O/U 2.5, стакана в снимке нет
+    )
+
+    outcome = evaluate(ctx)
+
+    assert outcome.verdict is RiskVerdict.REJECTED
+    codes = [r.code for r in outcome.reasons]
+    assert "market_not_executable" in codes
+    reason = next(r for r in outcome.reasons if r.code == "market_not_executable")
+    assert "Games Total" in reason.message
+
+
+def test_main_market_still_executes_normally():
+    """Запрет касается только соседних рынков — основной работает как раньше."""
+    from app.constants import RiskVerdict
+    from app.services.risk_engine import RiskContext, evaluate
+
+    ctx = RiskContext(
+        action=Action.BUY_YES,
+        stake_usdc=50.0,
+        max_acceptable_price=0.75,
+        snapshot=snapshot_with_siblings(),
+        cash_balance=1000.0,
+        available_balance=1000.0,
+        total_exposure=0.0,
+        market_exposure=0.0,
+        target_market_id=None,
+    )
+
+    assert evaluate(ctx).verdict in (RiskVerdict.APPROVED, RiskVerdict.ADJUSTED)
+
+
 def test_sibling_lookup_survives_provider_failure():
     """Сбой на соседних рынках не должен ронять снимок."""
     def handler(request: httpx.Request) -> httpx.Response:
