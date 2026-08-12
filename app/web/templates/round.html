@@ -92,6 +92,84 @@
   </div>
 </div>
 
+{% if can_review and not revealed %}
+<div class="card">
+  <h2>Заявки на ставку</h2>
+  {% if approval_required %}
+  <p class="warn"><b>Боевой режим.</b> Ордера уходят на Polymarket за реальные деньги.
+     Без вашего одобрения не исполнится ничего.</p>
+  {% else %}
+  <p class="muted">Бумажный режим: одобрение не требуется, деньги виртуальные.</p>
+  {% endif %}
+
+  <div class="analysis-grid">
+    {% for d in decisions %}
+    {% set dec = d.decision %}
+    <div class="analysis-col {{ d.participant }}">
+      <div class="analysis-head">
+        <b>{{ d.display_name or d.participant }}</b>
+        <span class="muted">{{ d.model_name or '' }}</span>
+      </div>
+
+      {% if d.status != 'VALID' %}
+        <p class="warn">Решение не получено: {{ d.status }}</p>
+      {% else %}
+        <div class="verdict {{ dec.action|lower }}">{{ dec.action }}</div>
+        <table>
+          <tr><td>Оценка P(YES)</td><td class="num">{{ '%.3f'|format(dec.estimated_probability) }}</td></tr>
+          <tr><td>Цена рынка</td><td class="num">{{ '%.3f'|format(dec.market_probability) if dec.market_probability is not none else '—' }}</td></tr>
+          <tr><td>Edge сырой</td><td class="num">{{ '%+.3f'|format(dec.edge) if dec.edge is not none else '—' }}</td></tr>
+          <tr><td><b>Edge после комиссии</b></td>
+              <td class="num {{ 'pos' if (d.net_edge or 0) > 0 else 'neg' }}">
+                <b>{{ '%+.3f'|format(d.net_edge) if d.net_edge is not none else '—' }}</b></td></tr>
+          <tr><td>Комиссия</td><td class="num">{{ '%.2f'|format(d.taker_fee_usdc) if d.taker_fee_usdc is not none else '—' }} $</td></tr>
+          <tr><td>Ставка</td><td class="num">{{ '%.2f'|format(dec.stake_usdc) }} $</td></tr>
+          <tr><td>Потолок цены</td><td class="num">{{ dec.max_acceptable_price or '—' }}</td></tr>
+          <tr><td>Уверенность</td><td class="num">{{ '%.2f'|format(dec.confidence) }}</td></tr>
+        </table>
+
+        <p class="reason">{{ dec.short_reason }}</p>
+
+        {% if dec.key_factors %}
+        <div class="factors"><b>За:</b>
+          <ul>{% for f in dec.key_factors %}<li>{{ f }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
+        {% if dec.risk_factors %}
+        <div class="factors risks"><b>Риски:</b>
+          <ul>{% for f in dec.risk_factors %}<li>{{ f }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
+
+        {% if d.risk %}
+        <div class="risk-box {{ d.risk.verdict|lower }}">
+          Risk engine: <b>{{ d.risk.verdict }}</b>
+          {% if d.risk.approved_stake is not none %}
+            → {{ '%.2f'|format(d.risk.approved_stake) }} $
+          {% endif %}
+          <ul>{% for r in d.risk.reasons %}<li>{{ r.message }}</li>{% endfor %}</ul>
+        </div>
+        {% endif %}
+
+        <div class="approve-row">
+          {% if d.approved_by %}
+            <span class="approved">✅ одобрено ({{ d.approved_by }})</span>
+            <button class="btn-secondary"
+                    onclick="revokeApproval({{ round.id }}, '{{ d.participant }}')">Снять</button>
+          {% else %}
+            <button class="btn-approve"
+                    onclick="approveDecision({{ round.id }}, '{{ d.participant }}')">
+              Одобрить ставку
+            </button>
+          {% endif %}
+        </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {% if revealed %}
 <div class="card">
   <h2>Раскрытие решений</h2>

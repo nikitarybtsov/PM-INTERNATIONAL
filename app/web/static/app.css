@@ -111,3 +111,87 @@ pre {
 .notice.err { border-color: #fca5a5; background: #fef2f2; }
 .hidden { display: none; }
 .chart-wrap { overflow-x: auto; }
+
+/* --- экран одобрения заявок ------------------------------------------- */
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+.analysis-col {
+  border: 1px solid #2a3346;
+  border-radius: 10px;
+  padding: 12px;
+  background: #161b26;
+}
+.analysis-col.codex  { border-top: 3px solid #4c8dff; }
+.analysis-col.claude { border-top: 3px solid #d97757; }
+.analysis-col.titan  { border-top: 3px solid #43c59e; }
+.analysis-head { display: flex; justify-content: space-between; align-items: baseline; }
+.analysis-head .muted { font-size: 11px; }
+
+.verdict {
+  display: inline-block;
+  margin: 8px 0;
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-weight: 700;
+  letter-spacing: .03em;
+  background: #22304a;
+}
+.verdict.buy_yes { background: #14532d; color: #86efac; }
+.verdict.buy_no  { background: #4a1d1d; color: #fca5a5; }
+.verdict.hold    { background: #2a3346; color: #9aa4b8; }
+.verdict.sell    { background: #3b2f10; color: #fcd34d; }
+
+.analysis-col .reason {
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 10px 0;
+  color: #cfd6e4;
+}
+.factors { font-size: 12px; margin-top: 8px; }
+.factors ul { margin: 4px 0 0 16px; padding: 0; }
+.factors li { margin: 2px 0; color: #9aa4b8; }
+.factors.risks li { color: #d0a36a; }
+
+.risk-box {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  background: #1b2231;
+}
+.risk-box.approved { border-left: 3px solid #43c59e; }
+.risk-box.adjusted { border-left: 3px solid #d0a36a; }
+.risk-box.rejected { border-left: 3px solid #e06c75; }
+.risk-box ul { margin: 6px 0 0 16px; padding: 0; color: #9aa4b8; }
+
+.approve-row { margin-top: 12px; display: flex; gap: 8px; align-items: center; }
+.btn-approve {
+  background: #1f6f4a;
+  border: 1px solid #2c9c68;
+  color: #eaf6f0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btn-approve:hover { background: #2c9c68; }
+.btn-secondary {
+  background: #2a3346;
+  border: 1px solid #3a465e;
+  color: #cfd6e4;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.approved { color: #86efac; font-weight: 600; }
+
+.pill.live {
+  background: #7f1d1d;
+  color: #fecaca;
+  border: 1px solid #b91c1c;
+  font-weight: 700;
+}

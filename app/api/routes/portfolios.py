@@ -15,6 +15,53 @@ from app.services import portfolio as pf
 router = APIRouter(prefix="/api/portfolios", tags=["portfolios"])
 
 
+@router.get("/titan/live-trades")
+def titan_live_trades() -> dict:
+    """Сделки Титана прямо с его кошелька на Polymarket.
+
+    Титан торгует руками со своего аккаунта — система ничего за него не решает
+    и не исполняет. Нужен только публичный адрес: приватный ключ для чтения
+    сделок не требуется и намеренно не поддерживается.
+    """
+    import httpx
+
+    from app.config import get_settings
+
+    address = (get_settings().titan_poly_address or "").strip()
+    if not address:
+        return {"address": None, "trades": [], "note": "TITAN_POLY_ADDRESS не задан"}
+
+    try:
+        with httpx.Client(timeout=20, follow_redirects=True) as client:
+            response = client.get(
+                "https://data-api.polymarket.com/trades",
+                params={"user": address, "limit": 50},
+            )
+            response.raise_for_status()
+            raw = response.json()
+    except Exception as exc:  # noqa: BLE001 — биржа недоступна, это не отказ панели
+        raise HTTPException(
+            status_code=502, detail=f"не удалось получить сделки: {exc}"
+        ) from exc
+
+    trades = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        trades.append(
+            {
+                "title": item.get("title") or item.get("slug"),
+                "outcome": item.get("outcome"),
+                "side": item.get("side"),
+                "size": float(item.get("size") or 0),
+                "price": float(item.get("price") or 0),
+                "timestamp": item.get("timestamp"),
+                "transaction_hash": item.get("transactionHash"),
+            }
+        )
+    return {"address": address, "trades": trades}
+
+
 @router.get("")
 def list_portfolios(db: Session = Depends(get_db)) -> list[dict]:
     marks = paper_engine.latest_marks(db)

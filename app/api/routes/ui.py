@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.constants import Phase
+from app.constants import Phase, RoundStatus
 from app.db.base import get_db
 from app.db.models import Market, Participant, Round, Settlement, Snapshot
 from app.services import (
@@ -122,12 +122,26 @@ def round_page(request: Request, round_id: int, db: Session = Depends(get_db)) -
     market = db.get(Market, round_row.market_id)
 
     revealed = rounds_service.is_revealed(round_row)
+
+    # Оператор видит заявки, когда зафиксировались ВСЕ трое: до этого показ
+    # означал бы, что он может подсказать Титану, что выбрали ИИ.
+    can_review = round_row.status in (
+        RoundStatus.LOCKED.value,
+        RoundStatus.AWAITING_APPROVAL.value,
+        RoundStatus.EXECUTED.value,
+        RoundStatus.REVEALED.value,
+    )
+
     decisions = []
-    if revealed:
+    if can_review:
         from app.api.routes.rounds import get_decisions
 
-        decisions = get_decisions(round_id, db)["decisions"]
+        payload = get_decisions(round_id, db)
+        decisions = payload.get("decisions", []) if not payload.get("hidden") else []
+        if not decisions:
+            decisions = _operator_view(db, round_row)
 
+    settings = get_settings()
     return templates.TemplateResponse(
         "round.html",
         {
@@ -140,9 +154,48 @@ def round_page(request: Request, round_id: int, db: Session = Depends(get_db)) -
             "stale_reason": stale_reason,
             "state": rounds_service.public_round_state(db, round_row),
             "revealed": revealed,
+            "can_review": can_review,
+            "awaiting_approval": round_row.status == RoundStatus.AWAITING_APPROVAL.value,
+            "approval_required": settings.live_execution_ready(),
             "decisions": decisions,
         },
     )
+
+
+def _operator_view(db: Session, round_row: Round) -> list[dict]:
+    """Заявки для экрана одобрения: решение, вердикт риск-движка, одобрение.
+
+    Отдельно от `get_decisions`, потому что тот отдаёт данные участникам и до
+    раскрытия молчит. Оператор — не участник: ему нужно видеть, что он одобряет.
+    """
+    from app.db.models import Participant, RiskEvaluation
+
+    rows = []
+    for decision in rounds_service.decisions_for(db, round_row.id):
+        participant = db.get(Participant, decision.participant_id)
+        evaluation = db.scalar(
+            select(RiskEvaluation).where(RiskEvaluation.decision_id == decision.id)
+        )
+        rows.append(
+            {
+                "participant": participant.key if participant else "?",
+                "display_name": participant.display_name if participant else "?",
+                "status": decision.status,
+                "decision": decision.payload or {},
+                "model_name": decision.model_name,
+                "net_edge": decision.net_edge,
+                "taker_fee_usdc": decision.taker_fee_usdc,
+                "approved_by": decision.approved_by,
+                "risk": {
+                    "verdict": evaluation.verdict if evaluation else None,
+                    "approved_stake": evaluation.approved_stake if evaluation else None,
+                    "reasons": evaluation.reasons if evaluation else [],
+                }
+                if evaluation
+                else None,
+            }
+        )
+    return sorted(rows, key=lambda r: r["participant"])
 
 
 @router.get("/ui/rounds/{round_id}/titan", response_class=HTMLResponse)
@@ -177,6 +230,49 @@ def titan_page(request: Request, round_id: int, db: Session = Depends(get_db)) -
             "submitted": submitted,
             "submitted_payload": submitted.payload if submitted else None,
             "limits": get_settings().risk.model_dump(),
+        },
+    )
+
+
+@router.get("/ui/trades", response_class=HTMLResponse)
+def trades_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    """Лента совершённых сделок: что, когда, по какой цене и кто одобрил."""
+    from app.db.models import Fill, SimulatedOrder
+
+    rows = []
+    orders = db.scalars(
+        select(SimulatedOrder).order_by(SimulatedOrder.id.desc()).limit(200)
+    )
+    for order in orders:
+        participant = db.get(Participant, order.participant_id)
+        market = db.get(Market, order.market_id)
+        fills = list(db.scalars(select(Fill).where(Fill.order_id == order.id)))
+        filled = round(sum(f.size for f in fills), 6)
+        notional = round(sum(f.size * f.price for f in fills), 4)
+        rows.append(
+            {
+                "id": order.id,
+                "round_id": order.round_id,
+                "participant": participant.key if participant else "?",
+                "market": market.title if market else "?",
+                "market_type": market.market_type if market else "",
+                "action": order.action,
+                "outcome": order.outcome,
+                "status": order.status,
+                "filled_size": filled,
+                "avg_price": round(notional / filled, 4) if filled else 0.0,
+                "notional": notional,
+                "fee": order.fee or 0.0,
+                "created_at": order.created_at,
+            }
+        )
+
+    return templates.TemplateResponse(
+        "trades.html",
+        {
+            **_base_context(request),
+            "orders": rows,
+            "titan_address": get_settings().titan_poly_address,
         },
     )
 

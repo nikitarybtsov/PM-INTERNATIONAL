@@ -43,6 +43,38 @@ async function act(path, body, successMessage, reload = true) {
   }
 }
 
+// --- одобрение заявок оператором -------------------------------------------
+// В боевом режиме без этого ордер не уйдёт на биржу, поэтому подтверждаем
+// намерение: случайный клик не должен двигать реальные деньги.
+async function approveDecision(roundId, participant) {
+  const live = document.body.dataset.executionMode === "LIVE";
+  const question = live
+    ? `Одобрить ставку участника ${participant}?\n\nЭТО РЕАЛЬНЫЕ ДЕНЬГИ: ордер уйдёт на Polymarket.`
+    : `Одобрить заявку участника ${participant}?`;
+  if (!window.confirm(question)) return;
+  await act(
+    `/api/rounds/${roundId}/decisions/${participant}/approve`,
+    undefined,
+    `Заявка ${participant} одобрена`
+  );
+}
+
+async function revokeApproval(roundId, participant) {
+  try {
+    await api(`/api/rounds/${roundId}/decisions/${participant}/approve`, {
+      method: "DELETE",
+    });
+    flash(`Одобрение ${participant} снято`, "ok");
+    setTimeout(() => window.location.reload(), 700);
+  } catch (err) {
+    flash(err.message, "err");
+  }
+}
+
+async function prepareRound(roundId) {
+  await act(`/api/rounds/${roundId}/prepare`, undefined, "Заявки просчитаны");
+}
+
 function splitLines(value) {
   return (value || "")
     .split("\n")

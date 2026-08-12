@@ -7,16 +7,22 @@
   <link rel="stylesheet" href="/static/app.css">
   <script defer src="/static/app.js"></script>
 </head>
-<body>
+<body data-execution-mode="{{ execution_mode }}">
 <header class="top">
   <span class="brand">🎮 Титан vs Codex vs Claude</span>
   <a href="/">Scoreboard</a>
   <a href="/ui/markets">Матчи</a>
+  <a href="/ui/trades">Сделки</a>
   <a href="/ui/exports">Экспорт</a>
   <a href="/docs">API</a>
   <span style="margin-left:auto"></span>
+  {% if execution_mode == 'LIVE' %}
+  <span class="pill live">РЕАЛЬНЫЕ ДЕНЬГИ</span>
+  {% elif execution_mode == 'DRY-RUN' %}
+  <span class="pill warn">DRY-RUN — ордера не уходят</span>
+  {% else %}
   <span class="pill">PAPER TRADING</span>
-  <span class="pill warn">live: {{ 'ON' if live_trading else 'OFF' }}</span>
+  {% endif %}
   <span class="muted" style="color:#9aa4b8">источник: {{ provider }}</span>
 </header>
 <main>

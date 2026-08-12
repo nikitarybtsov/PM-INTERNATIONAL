@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h2>Совершённые сделки</h2>
+  <p class="muted">
+    Всё, что было исполнено: рынок, исход, объём, средняя цена и комиссия.
+    {% if execution_mode == 'LIVE' %}
+      Режим боевой — это реальные ордера на Polymarket.
+    {% else %}
+      Режим бумажный — сделки симулированы по стакану из snapshot.
+    {% endif %}
+  </p>
+
+  {% if not orders %}
+  <p class="muted">Сделок пока нет.</p>
+  {% else %}
+  <table>
+    <tr>
+      <th>#</th><th>Раунд</th><th>Участник</th><th>Матч</th><th>Тип</th>
+      <th>Действие</th><th class="num">Объём</th><th class="num">Ср. цена</th>
+      <th class="num">Сумма</th><th class="num">Комиссия</th><th>Статус</th>
+    </tr>
+    {% for o in orders %}
+    <tr>
+      <td>{{ o.id }}</td>
+      <td><a href="/ui/rounds/{{ o.round_id }}">#{{ o.round_id }}</a></td>
+      <td><b class="{{ o.participant }}">{{ o.participant }}</b></td>
+      <td>{{ o.market[:52] }}</td>
+      <td class="muted">{{ o.market_type }}</td>
+      <td>{{ o.action }} {{ o.outcome }}</td>
+      <td class="num">{{ '%.2f'|format(o.filled_size) }}</td>
+      <td class="num">{{ '%.4f'|format(o.avg_price) }}</td>
+      <td class="num">{{ '%.2f'|format(o.notional) }} $</td>
+      <td class="num">{{ '%.4f'|format(o.fee) }}</td>
+      <td class="{{ 'pos' if o.status == 'FILLED' else 'muted' }}">{{ o.status }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Сделки Титана на Polymarket</h2>
+  {% if titan_address %}
+    <p class="muted">Кошелёк <code>{{ titan_address }}</code> — сделки подтягиваются с биржи.</p>
+    <p class="muted">Аналитика ИИ на этой вкладке не показывается сознательно:
+       здесь только то, что человек реально сделал своими руками.</p>
+    <div id="titan-trades" class="muted">Загрузка…</div>
+    <script>
+      (async () => {
+        const box = document.getElementById("titan-trades");
+        try {
+          const data = await api("/api/portfolios/titan/live-trades");
+          if (!data.trades || !data.trades.length) {
+            box.textContent = "Сделок на кошельке пока нет.";
+            return;
+          }
+          const rows = data.trades.map((t) => `
+            <tr>
+              <td>${t.title || "?"}</td>
+              <td>${t.outcome || ""}</td>
+              <td class="num">${(t.size || 0).toFixed(2)}</td>
+              <td class="num">${(t.price || 0).toFixed(4)}</td>
+              <td class="muted">${t.timestamp || ""}</td>
+            </tr>`).join("");
+          box.innerHTML = `<table>
+            <tr><th>Рынок</th><th>Исход</th><th class="num">Объём</th>
+                <th class="num">Цена</th><th>Когда</th></tr>${rows}</table>`;
+        } catch (e) {
+          box.textContent = "Не удалось получить сделки: " + e.message;
+        }
+      })();
+    </script>
+  {% else %}
+    <p class="muted">
+      Кошелёк Титана не задан. Укажите его адрес в <code>TITAN_POLY_ADDRESS</code>
+      в <code>.env</code> на сервере — приватный ключ для чтения сделок не нужен,
+      достаточно публичного адреса.
+    </p>
+  {% endif %}
+</div>
+
+{% endblock %}
