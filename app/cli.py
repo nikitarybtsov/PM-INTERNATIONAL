@@ -1,4 +1,4 @@
-"""CLI: инициализация БД, seed, демо-раунд.
+﻿"""CLI: инициализация БД, seed, демо-раунд.
 
 Запуск:
     python -m app.cli init          # создать таблицы и участников
@@ -14,7 +14,7 @@ import argparse
 import json
 import sys
 
-from app.config import LIVE_TRADING_ENABLED, get_settings
+from app.config import get_settings
 from app.constants import Phase
 from app.db.base import create_all, session_scope
 from app.schemas.decision import TradeDecisionInput
@@ -160,9 +160,14 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("status", help="краткий scoreboard").set_defaults(func=cmd_status)
 
     args = parser.parse_args(argv)
-    if LIVE_TRADING_ENABLED:  # pragma: no cover — константа всегда False
-        print("LIVE TRADING включён — выполнение остановлено", file=sys.stderr)
-        return 2
+    # CLI управляет бумажной частью и демо. Реальные ордера уходят только из
+    # панели, по одобрению оператора, поэтому здесь боевой режим не нужен.
+    if get_settings().live_execution_ready():
+        print(
+            "Включён боевой режим. CLI работает только с бумажной частью: "
+            "реальные сделки подтверждаются в панели.",
+            file=sys.stderr,
+        )
     return args.func(args)
 
 

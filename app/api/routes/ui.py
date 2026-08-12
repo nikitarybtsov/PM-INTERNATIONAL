@@ -1,4 +1,4 @@
-"""HTML-страницы панели оператора и формы Титана."""
+﻿"""HTML-страницы панели оператора и формы Титана."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import LIVE_TRADING_ENABLED, get_settings
+from app.config import get_settings
 from app.constants import Phase
 from app.db.base import get_db
 from app.db.models import Market, Participant, Round, Settlement, Snapshot
@@ -40,7 +40,12 @@ def _base_context(request: Request) -> dict:
     settings = get_settings()
     return {
         "request": request,
-        "live_trading": LIVE_TRADING_ENABLED,
+        "live_trading": settings.live_execution_ready(),
+        "execution_mode": (
+            "LIVE" if settings.live_execution_ready()
+            else "DRY-RUN" if settings.live_trading_enabled
+            else "PAPER"
+        ),
         "provider": settings.market_data_provider,
         "phases": [p.value for p in Phase],
     }

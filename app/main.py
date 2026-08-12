@@ -1,4 +1,4 @@
-"""Точка входа FastAPI.
+﻿"""Точка входа FastAPI.
 
 ВНИМАНИЕ: приложение работает исключительно в режиме paper trading.
 Никаких реальных ордеров, транзакций, приватных ключей и подписи операций.
@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.auth import auth_middleware
-from app.config import LIVE_TRADING_ENABLED, get_settings
+from app.config import get_settings
 from app.db.base import create_all, session_scope
 from app.services.seed import seed_participants
 
@@ -71,13 +71,23 @@ async def lifespan(app: FastAPI):
     with session_scope() as db:
         seed_participants(db)
 
+    mode = (
+        "LIVE" if settings.live_execution_ready()
+        else "DRY-RUN" if settings.live_trading_enabled
+        else "PAPER"
+    )
     logger.info(
-        "старт: провайдер=%s, codex=%s, claude=%s, live_trading=%s",
+        "старт: провайдер=%s, codex=%s, claude=%s, исполнение=%s",
         settings.market_data_provider,
         settings.codex_transport,
         settings.claude_transport,
-        LIVE_TRADING_ENABLED,
+        mode,
     )
+    if mode == "LIVE":
+        logger.warning(
+            "БОЕВОЙ РЕЖИМ: ордера уходят на Polymarket за реальные деньги. "
+            "Каждая сделка всё равно требует одобрения оператора."
+        )
     if not settings.panel_auth_enabled():
         logger.warning(
             "PANEL_PASSWORD не задан — панель открыта без авторизации. "
@@ -132,8 +142,17 @@ def create_app() -> FastAPI:
         settings = get_settings()
         return {
             "status": "ok",
-            "mode": "PAPER_TRADING_ONLY",
-            "live_trading_enabled": LIVE_TRADING_ENABLED,
+            "mode": (
+                "LIVE" if settings.live_execution_ready()
+                else "DRY_RUN" if settings.live_trading_enabled
+                else "PAPER_TRADING_ONLY"
+            ),
+            "live_trading_enabled": settings.live_trading_enabled,
+            "execution_dry_run": settings.execution_dry_run,
+            "wallets_configured": {
+                "codex": settings.wallet_for("codex") is not None,
+                "claude": settings.wallet_for("claude") is not None,
+            },
             "market_data_provider": settings.market_data_provider,
             "codex_transport": settings.codex_transport,
             "claude_transport": settings.claude_transport,

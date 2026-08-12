@@ -6,26 +6,55 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # ---------------------------------------------------------------------------
-# ЖЁСТКАЯ БЛОКИРОВКА РЕАЛЬНОЙ ТОРГОВЛИ.
-# Константа не читается из окружения намеренно: включение live-режима требует
-# отдельного явного изменения кода и ревью. Тест `tests/test_no_live_trading.py`
-# защищает это значение.
+# РЕАЛЬНАЯ ТОРГОВЛЯ.
+#
+# Раньше здесь стоял хардкод False. Теперь режим включается оператором, но
+# одного флага недостаточно — предохранителей три, и снимать их нужно по
+# отдельности:
+#
+#   1. LIVE_TRADING_ENABLED=true      — общее разрешение (по умолчанию выкл.);
+#   2. EXECUTION_DRY_RUN=false        — иначе ордер только логируется, но не
+#                                       уходит на биржу (по умолчанию вкл.);
+#   3. одобрение оператора на КАЖДУЮ сделку — движок не исполняет ничего сам.
+#
+# Что защищено тестами (`tests/test_live_execution.py`, `test_no_live_trading.py`):
+# значения по умолчанию безопасны, ключи не попадают в БД, логи и экспорт,
+# без одобрения оператора сделка не уходит.
 # ---------------------------------------------------------------------------
-LIVE_TRADING_ENABLED: bool = False
 
 # v2 — в промпт добавлена комиссия тейкера и порог безубыточности.
 # Версия участвует в аудите: решения, принятые по разным промптам, несравнимы.
 PROMPT_VERSION = "v2"
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+
+
+@dataclass(frozen=True, slots=True)
+class WalletConfig:
+    """Торговая связка участника. Приватный ключ живёт только в памяти процесса."""
+
+    participant: str
+    private_key: str
+    funder: str | None
+    signature_type: int
+    chain_id: int = 137
+
+    def __repr__(self) -> str:  # pragma: no cover - защита от случайного логирования
+        return (
+            f"WalletConfig(participant={self.participant!r}, funder={self.funder!r}, "
+            f"signature_type={self.signature_type}, private_key=***)"
+        )
+
+    __str__ = __repr__
 
 
 class RiskLimits(BaseSettings):
@@ -119,6 +148,26 @@ class Settings(BaseSettings):
     paper_fee_bps: int = 0
     paper_allow_partial_fill: bool = True
 
+    # --- Реальное исполнение на Polymarket ---------------------------------
+    # Три независимых предохранителя, см. комментарий в начале файла.
+    live_trading_enabled: bool = False
+    execution_dry_run: bool = True
+    # FAK — допускается частичное исполнение (рекомендуется для тейкера),
+    # FOK — либо весь объём, либо отмена.
+    execution_taker_order_type: Literal["FAK", "FOK"] = "FAK"
+    execution_timeout_seconds: float = 30.0
+    polymarket_chain_id: int = 137
+
+    # Кошельки участников. Ключи только из окружения; в репозитории их нет.
+    codex_poly_private_key: str | None = Field(default=None, repr=False)
+    codex_poly_funder: str | None = None
+    codex_poly_signature_type: int = 3
+    claude_poly_private_key: str | None = Field(default=None, repr=False)
+    claude_poly_funder: str | None = None
+    claude_poly_signature_type: int = 1
+    # Кошелёк Титана — только для чтения его сделок, ключ не нужен.
+    titan_poly_address: str | None = None
+
     export_dir: str = "./exports"
 
     # --- Telegram --------------------------------------------------------
@@ -149,10 +198,29 @@ class Settings(BaseSettings):
     def risk(self) -> RiskLimits:
         return RiskLimits()
 
-    @property
-    def live_trading_enabled(self) -> bool:
-        """Всегда False: live execution физически отсутствует."""
-        return LIVE_TRADING_ENABLED
+    def wallet_for(self, participant_key: str) -> WalletConfig | None:
+        """Торговая связка участника или None, если ключи не заданы."""
+        prefix = participant_key.strip().lower()
+        key = getattr(self, f"{prefix}_poly_private_key", None)
+        funder = getattr(self, f"{prefix}_poly_funder", None)
+        if not key or not str(key).strip():
+            return None
+        return WalletConfig(
+            participant=prefix,
+            private_key=str(key).strip(),
+            funder=(str(funder).strip() or None) if funder else None,
+            signature_type=int(getattr(self, f"{prefix}_poly_signature_type", 1)),
+            chain_id=self.polymarket_chain_id,
+        )
+
+    def live_execution_ready(self) -> bool:
+        """Можно ли вообще отправлять реальные ордера прямо сейчас."""
+        return bool(
+            self.live_trading_enabled
+            and not self.execution_dry_run
+            and self.wallet_for("codex")
+            and self.wallet_for("claude")
+        )
 
     def has_openai(self) -> bool:
         return bool(self.openai_api_key and self.openai_api_key.strip())
@@ -171,13 +239,32 @@ class Settings(BaseSettings):
     def panel_auth_enabled(self) -> bool:
         return bool(self.panel_password and self.panel_password.strip())
 
+    #: Подстроки в имени поля, по которым значение считается секретом.
+    #: Список именно расширяемый: добавляя новый секрет в настройки, добавьте
+    #: сюда его признак — иначе значение уедет в /api/config и в логи.
+    SECRET_NAME_PARTS: ClassVar[tuple[str, ...]] = (
+        "api_key", "secret", "token", "password", "passphrase", "private_key",
+    )
+
     def safe_dump(self) -> dict[str, object]:
-        """Дамп конфигурации без секретов — пригоден для логов и /health."""
+        """Дамп конфигурации без секретов — пригоден для логов и /api/config."""
         data = self.model_dump()
         for key in list(data):
-            if "api_key" in key or "secret" in key or "token" in key:
+            if any(part in key.lower() for part in self.SECRET_NAME_PARTS):
                 data[key] = "***set***" if data[key] else None
-        data["live_trading_enabled"] = LIVE_TRADING_ENABLED
+        data["live_trading_enabled"] = self.live_trading_enabled
+        data["execution_dry_run"] = self.execution_dry_run
+        data["live_execution_ready"] = self.live_execution_ready()
+        # Кошельки: показываем только публичные адреса, ключи — никогда.
+        data["wallets"] = {
+            key: {
+                "funder": w.funder,
+                "signature_type": w.signature_type,
+                "private_key": "***set***",
+            }
+            for key in ("codex", "claude")
+            if (w := self.wallet_for(key))
+        }
         data["risk"] = self.risk.model_dump()
         return data
 

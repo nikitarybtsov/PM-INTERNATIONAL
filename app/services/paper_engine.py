@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import LIVE_TRADING_ENABLED, get_settings
+from app.config import get_settings
 from app.constants import (
     Action,
     LedgerType,
@@ -83,10 +83,12 @@ def execute(
     snapshot_row: Snapshot,
     snapshot_model: MarketSnapshot,
 ) -> ExecutionResult | None:
-    """Исполнить одобренную риск-движком заявку в бумажном режиме."""
-    if LIVE_TRADING_ENABLED:  # pragma: no cover — константа всегда False
-        raise LiveTradingForbidden("live execution отключён на уровне кода")
+    """Исполнить одобренную риск-движком заявку в бумажном режиме.
 
+    Бумажный движок остаётся источником истины для статистики даже в боевом
+    режиме: реальные филлы приходят из `adapters/execution` и записываются
+    поверх. Здесь ордера на биржу не уходят никогда.
+    """
     if not risk.is_executable:
         return None
 
