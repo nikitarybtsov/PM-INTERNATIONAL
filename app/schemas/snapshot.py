@@ -69,6 +69,36 @@ class SnapshotMarketInfo(BaseModel):
     starts_at: datetime | None = None
 
 
+class SiblingMarket(BaseModel):
+    """Другой рынок того же матча: тотал карт, фора, победитель карты, экзотика.
+
+    Участник волен ставить на любой из них — недооценённым может оказаться не
+    победитель серии, а, скажем, тотал. Стакан здесь не приводится: он занял бы
+    весь промпт, а для отбора кандидата хватает цены, спреда и ликвидности.
+    Полный стакан подтягивается уже при исполнении.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    market_id: int
+    external_id: str
+    question: str
+    market_type: str = "SPECIAL"
+    yes_label: str = "YES"
+    no_label: str = "NO"
+    yes_price: float = Field(ge=0.0, le=1.0)
+    no_price: float = Field(ge=0.0, le=1.0)
+    yes_best_ask: float | None = None
+    no_best_ask: float | None = None
+    liquidity_usdc: float = 0.0
+
+    @property
+    def spread(self) -> float | None:
+        if self.yes_best_ask is None:
+            return None
+        return round(abs(self.yes_best_ask - self.yes_price) * 2, 4)
+
+
 class MarketSnapshot(BaseModel):
     """Полный снимок, который видят участники."""
 
@@ -78,6 +108,10 @@ class MarketSnapshot(BaseModel):
     phase: Phase
     map_number: int | None = None
     market: SnapshotMarketInfo
+
+    #: Остальные рынки того же матча. Участник может выбрать любой из них,
+    #: указав market_id в решении.
+    sibling_markets: list[SiblingMarket] = Field(default_factory=list)
 
     yes_price: float = Field(ge=0.0, le=1.0, description="Средняя цена YES (mid)")
     no_price: float = Field(ge=0.0, le=1.0, description="Средняя цена NO (mid)")
@@ -122,8 +156,32 @@ class MarketSnapshot(BaseModel):
     def book_for(self, outcome: str) -> SnapshotBook:
         return self.yes_book if outcome == "YES" else self.no_book
 
-    def market_probability(self, outcome: str) -> float:
+    def market_probability(self, outcome: str, market_id: int | None = None) -> float:
+        """Цена исхода. По умолчанию — основной рынок раунда.
+
+        Если участник выбрал другой рынок матча, цена берётся из него: сравнивать
+        его оценку с ценой чужого рынка бессмысленно.
+        """
+        if market_id is not None and market_id != self.market.market_id:
+            sibling = self.sibling(market_id)
+            if sibling is not None:
+                return sibling.yes_price if outcome == "YES" else sibling.no_price
         return self.yes_price if outcome == "YES" else self.no_price
+
+    def sibling(self, market_id: int) -> SiblingMarket | None:
+        for candidate in self.sibling_markets:
+            if candidate.market_id == market_id:
+                return candidate
+        return None
+
+    def allows_market(self, market_id: int | None) -> bool:
+        """Можно ли ставить на этот рынок в рамках снимка."""
+        if market_id is None or market_id == self.market.market_id:
+            return True
+        return self.sibling(market_id) is not None
+
+    def tradeable_market_ids(self) -> list[int]:
+        return [self.market.market_id, *(s.market_id for s in self.sibling_markets)]
 
     def payload(self) -> dict:
         """JSON-совместимое представление для хранения в БД."""
@@ -182,4 +240,17 @@ class MarketSnapshot(BaseModel):
             "recent_prices": self.recent_prices,
             "operator_context": self.operator_context,
             "captured_at": self.captured_at.isoformat(),
+            # Остальные рынки матча: ставить можно на любой, указав его market_id
+            "other_markets": [
+                {
+                    "market_id": s.market_id,
+                    "question": s.question,
+                    "type": s.market_type,
+                    "outcome_labels": {"YES": s.yes_label, "NO": s.no_label},
+                    "prices": {"yes": s.yes_price, "no": s.no_price},
+                    "best_ask": {"yes": s.yes_best_ask, "no": s.no_best_ask},
+                    "liquidity_usdc": s.liquidity_usdc,
+                }
+                for s in self.sibling_markets
+            ],
         }

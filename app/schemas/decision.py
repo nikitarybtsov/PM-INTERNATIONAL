@@ -27,6 +27,10 @@ class TradeDecisionInput(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     action: Action
+    #: На какой рынок ставим. Пусто — основной рынок раунда (победитель серии).
+    #: Любой из `other_markets` снимка выбирается указанием его market_id:
+    #: недооценённым может оказаться тотал карт или фора, а не исход серии.
+    target_market_id: int | None = Field(default=None, ge=1)
     estimated_probability: float = Field(ge=0.0, le=1.0)
     stake_usdc: float = Field(ge=0.0)
     max_acceptable_price: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -166,7 +170,15 @@ def json_schema_for_prompt() -> str:
     """Схема, которую видят LLM-участники (без системных полей)."""
     schema = {
         "action": "BUY_YES | BUY_NO | SELL | HOLD",
-        "estimated_probability": "число 0..1 — ваша оценка вероятности исхода YES",
+        "target_market_id": (
+            "число или null. null — основной рынок раунда. Чтобы поставить на "
+            "другой рынок матча (тотал карт, фора, победитель карты), укажите "
+            "его market_id из other_markets"
+        ),
+        "estimated_probability": (
+            "число 0..1 — ваша оценка вероятности исхода YES того рынка, "
+            "который вы выбрали в target_market_id"
+        ),
         "stake_usdc": "число >= 0; 0 для HOLD",
         "max_acceptable_price": "число 0..1; обязательно для BUY_YES/BUY_NO",
         "confidence": "число 0..1",

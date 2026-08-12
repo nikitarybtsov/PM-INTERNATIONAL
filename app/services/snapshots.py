@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC, datetime
 
@@ -18,7 +19,13 @@ from app.adapters.market_data import (
 from app.config import get_settings
 from app.constants import MarketStatus, Phase
 from app.db.models import Market, RawMarketPayload, Snapshot
-from app.schemas.snapshot import BookLevel, MarketSnapshot, SnapshotBook, SnapshotMarketInfo
+from app.schemas.snapshot import (
+    BookLevel,
+    MarketSnapshot,
+    SiblingMarket,
+    SnapshotBook,
+    SnapshotMarketInfo,
+)
 from app.services import audit
 
 logger = logging.getLogger(__name__)
@@ -101,9 +108,11 @@ def build_snapshot_model(
     operator_context: str | None = None,
     map_number: int | None = None,
     ttl_seconds: int | None = None,
+    siblings: list | None = None,
 ) -> MarketSnapshot:
     settings = get_settings()
     return MarketSnapshot(
+        sibling_markets=siblings or [],
         phase=phase,
         map_number=map_number,
         market=SnapshotMarketInfo(
@@ -135,6 +144,68 @@ def build_snapshot_model(
     )
 
 
+def _collect_sibling_markets(db: Session, provider, ref) -> list[SiblingMarket]:
+    """Остальные рынки матча — чтобы участник мог ставить не только на исход серии.
+
+    Рынки заводятся в БД: без этого исполнить по ним ставку было бы некуда.
+    Сбой на этом шаге не должен ронять снимок — эксперимент продолжится, просто
+    участники увидят один рынок.
+    """
+    try:
+        refs = provider.list_event_markets(ref)
+    except Exception:  # noqa: BLE001 — соседние рынки не критичны
+        logger.warning("не удалось получить соседние рынки для %s", ref.external_id)
+        return []
+
+    siblings: list[SiblingMarket] = []
+    for sibling_ref in refs:
+        try:
+            row = upsert_market(db, sibling_ref)
+            prices = (sibling_ref.raw or {}).get("outcomePrices")
+            values = _as_prices(prices)
+            if not values:
+                continue
+            yes_price = values[0]
+            no_price = values[1] if len(values) > 1 else round(1.0 - yes_price, 4)
+            siblings.append(
+                SiblingMarket(
+                    market_id=row.id,
+                    external_id=sibling_ref.external_id,
+                    question=sibling_ref.title,
+                    market_type=sibling_ref.market_type,
+                    yes_label=sibling_ref.yes_label,
+                    no_label=sibling_ref.no_label,
+                    yes_price=min(max(yes_price, 0.0), 1.0),
+                    no_price=min(max(no_price, 0.0), 1.0),
+                    liquidity_usdc=float(
+                        (sibling_ref.raw or {}).get("liquidityNum")
+                        or (sibling_ref.raw or {}).get("liquidity")
+                        or 0.0
+                    ),
+                )
+            )
+        except Exception:  # noqa: BLE001 — битый рынок пропускаем
+            continue
+    return siblings
+
+
+def _as_prices(raw) -> list[float]:
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(raw, list):
+        return []
+    out = []
+    for value in raw:
+        try:
+            out.append(float(value))
+        except (TypeError, ValueError):
+            return []
+    return out
+
+
 def capture_snapshot(
     db: Session,
     market: Market,
@@ -164,8 +235,13 @@ def capture_snapshot(
     # актуализируем метаданные (рынок мог измениться у источника)
     market = upsert_market(db, ref)
 
+    siblings = _collect_sibling_markets(db, provider, ref)
+
     model = build_snapshot_model(
-        market, quote, phase, operator_context=operator_context, map_number=map_number
+        market, quote, phase,
+        operator_context=operator_context,
+        map_number=map_number,
+        siblings=siblings,
     )
     row = Snapshot(
         market_id=market.id,

@@ -321,6 +321,42 @@ class PolymarketDataProvider(MarketDataProvider):
         asks.sort(key=lambda x: x[0])
         return bids[:10], asks[:10]
 
+    def list_event_markets(self, market: MarketRef) -> list[MarketRef]:
+        """Все рынки события одним запросом к Gamma.
+
+        Событие определяется по slug: у Polymarket рынки матча лежат внутри
+        одного события, и `/events?slug=…` отдаёт их разом вместе с ценами.
+        """
+        slug = (market.raw or {}).get("slug") or market.slug
+        event_slug = (market.raw or {}).get("events", [{}])
+        if isinstance(event_slug, list) and event_slug:
+            slug = (event_slug[0] or {}).get("slug") or slug
+        if not slug:
+            return []
+
+        try:
+            payload = self._get(f"{self.gamma_url}/events", params={"slug": slug})
+        except MarketNotAvailable:
+            logger.warning("не удалось получить рынки события %s", slug)
+            return []
+
+        events = payload if isinstance(payload, list) else [payload]
+        refs: list[MarketRef] = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            for raw in event.get("markets") or []:
+                if not isinstance(raw, dict) or not self._is_tradeable(raw):
+                    continue
+                if str(raw.get("id")) == str(market.external_id):
+                    continue  # сам рынок раунда в список соседей не попадает
+                try:
+                    refs.append(self._normalize(raw, event=event))
+                except Exception:  # pragma: no cover - битые записи пропускаем
+                    continue
+        self._store_raw(market.external_id, "/events(siblings)", {"count": len(refs)})
+        return refs
+
     def _fetch_price_history(self, token_id: str) -> list[float]:
         """История цены исхода YES — поле `recent_prices` снимка.
 

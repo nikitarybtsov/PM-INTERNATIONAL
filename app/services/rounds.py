@@ -164,8 +164,18 @@ def _store_decision(
     snapshot_model: MarketSnapshot,
 ) -> Decision:
     outcome = result.decision.outcome
+    target_market_id = result.decision.target_market_id
+    if not snapshot_model.allows_market(target_market_id):
+        # Участник назвал рынок, которого нет в снимке. Молча подменять его на
+        # основной нельзя: оценка вероятности относилась к другому событию.
+        raise ValueError(
+            f"рынок {target_market_id} отсутствует в snapshot; "
+            f"доступны: {snapshot_model.tradeable_market_ids()}"
+        )
     market_probability = (
-        snapshot_model.market_probability(outcome) if outcome else snapshot_model.yes_price
+        snapshot_model.market_probability(outcome, target_market_id)
+        if outcome
+        else snapshot_model.yes_price
     )
     full = TradeDecision.build(
         decision=result.decision,
