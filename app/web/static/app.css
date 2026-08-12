@@ -225,3 +225,57 @@ pre {
   color: #ffffff;
 }
 .risk-box b, .risk-box { color: #cfd6e4; }
+
+/* --- список раундов ----------------------------------------------------- */
+.row-attention { background: rgba(217, 119, 87, .10); }
+.attention { color: #e8956f; font-size: 15px; }
+.btn-link {
+  display: inline-block; padding: 5px 12px; border-radius: 7px;
+  background: #2a3346; color: #cfd6e4; text-decoration: none; font-size: 13px;
+}
+.btn-link:hover { background: #3a465e; }
+.pill.status-awaiting_approval { background: #4a3a1d; color: #fcd34d; }
+.pill.status-locked  { background: #22304a; color: #9ec5ff; }
+.pill.status-open    { background: #1b3a2a; color: #86efac; }
+.pill.status-executed, .pill.status-revealed { background: #2a3346; color: #9aa4b8; }
+
+/* --- читаемость таблиц внутри колонок анализа --------------------------- */
+/* Значения наследовали приглушённый цвет и на тёмном фоне почти пропадали.
+   Метрика, по которой принимается решение о деньгах, должна читаться сразу. */
+.analysis-col table { width: 100%; border-collapse: collapse; margin: 4px 0 2px; }
+.analysis-col table td {
+  padding: 7px 2px;
+  border-bottom: 1px solid #232b3b;
+  font-size: 13.5px;
+  color: #b9c2d4;            /* подписи */
+}
+.analysis-col table td.num,
+.analysis-col table td:last-child {
+  text-align: right;
+  color: #f2f5fa;            /* значения — контрастнее подписей */
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.analysis-col table tr:last-child td { border-bottom: none; }
+
+/* Строка с итоговым edge — это главное число экрана */
+.analysis-col table tr.key-row td { font-size: 15px; }
+.analysis-col table tr.key-row td:last-child { font-size: 16px; }
+.analysis-col .pos { color: #6ee7a0; }
+.analysis-col .neg { color: #f87171; }
+
+.analysis-col .reason {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: #dbe2ee;
+  background: #1b2231;
+  border-left: 3px solid #2a3346;
+  padding: 10px 12px;
+  border-radius: 0 8px 8px 0;
+}
+.factors b { color: #cfd6e4; }
+.factors li { color: #aab4c6; line-height: 1.5; }
+.factors.risks li { color: #d8a878; }
+
+/* Выделение мышью не должно делать текст нечитаемым */
+::selection { background: #2f6fd0; color: #ffffff; }

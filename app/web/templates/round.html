@@ -26,10 +26,16 @@
             {% if round.status != 'OPEN' %}disabled{% endif %}>
       1. Запросить Codex + Claude
     </button>
+    {% if titan_participates %}
     <a class="btn secondary" href="/ui/rounds/{{ round.id }}/titan">2. Форма Титана</a>
-    <button onclick="act('/api/rounds/{{ round.id }}/execute', undefined, 'Risk engine и paper execution отработали')"
-            {% if round.status != 'LOCKED' %}disabled{% endif %}>
-      3. Risk engine + исполнение
+    {% endif %}
+    <button onclick="prepareRound({{ round.id }})"
+            {% if round.status not in ['LOCKED', 'AWAITING_APPROVAL'] %}disabled{% endif %}>
+      2. Просчитать заявки
+    </button>
+    <button onclick="act('/api/rounds/{{ round.id }}/execute', undefined, 'Заявки исполнены')"
+            {% if round.status not in ['LOCKED', 'AWAITING_APPROVAL'] %}disabled{% endif %}>
+      3. Исполнить одобренные
     </button>
     <button onclick="act('/api/rounds/{{ round.id }}/reveal', undefined, 'Решения раскрыты')"
             {% if round.status not in ['EXECUTED', 'REVEALED'] %}disabled{% endif %}>
@@ -119,7 +125,7 @@
           <tr><td>Оценка P(YES)</td><td class="num">{{ '%.3f'|format(dec.estimated_probability) }}</td></tr>
           <tr><td>Цена рынка</td><td class="num">{{ '%.3f'|format(dec.market_probability) if dec.market_probability is not none else '—' }}</td></tr>
           <tr><td>Edge сырой</td><td class="num">{{ '%+.3f'|format(dec.edge) if dec.edge is not none else '—' }}</td></tr>
-          <tr><td><b>Edge после комиссии</b></td>
+          <tr class="key-row"><td><b>Edge после комиссии</b></td>
               <td class="num {{ 'pos' if (d.net_edge or 0) > 0 else 'neg' }}">
                 <b>{{ '%+.3f'|format(d.net_edge) if d.net_edge is not none else '—' }}</b></td></tr>
           <tr><td>Комиссия</td><td class="num">{{ '%.2f'|format(d.taker_fee_usdc) if d.taker_fee_usdc is not none else '—' }} $</td></tr>

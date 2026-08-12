@@ -13,7 +13,14 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.constants import Phase, RoundStatus
 from app.db.base import get_db
-from app.db.models import Market, Participant, Round, Settlement, Snapshot
+from app.db.models import (
+    Market,
+    Participant,
+    RiskEvaluation,
+    Round,
+    Settlement,
+    Snapshot,
+)
 from app.services import (
     export as export_service,
 )
@@ -47,6 +54,7 @@ def _base_context(request: Request) -> dict:
             else "PAPER"
         ),
         "provider": settings.market_data_provider,
+        "titan_participates": settings.titan_participates_in_rounds,
         "phases": [p.value for p in Phase],
     }
 
@@ -231,6 +239,45 @@ def titan_page(request: Request, round_id: int, db: Session = Depends(get_db)) -
             "submitted_payload": submitted.payload if submitted else None,
             "limits": get_settings().risk.model_dump(),
         },
+    )
+
+
+@router.get("/ui/rounds", response_class=HTMLResponse)
+def rounds_page(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
+    """Список раундов: по каким матчам модели уже высказались и что ждёт вас."""
+    rows = []
+    for round_row in db.scalars(select(Round).order_by(Round.id.desc()).limit(100)):
+        market = db.get(Market, round_row.market_id)
+        state = rounds_service.public_round_state(db, round_row)
+        decisions = rounds_service.decisions_for(db, round_row.id)
+
+        # Сколько заявок реально ждёт одобрения — это главное, зачем сюда заходят
+        pending = 0
+        for decision in decisions:
+            if decision.action in (None, "HOLD") or decision.approved_by:
+                continue
+            evaluation = db.scalar(
+                select(RiskEvaluation).where(RiskEvaluation.decision_id == decision.id)
+            )
+            if evaluation is not None and evaluation.verdict != "REJECTED":
+                pending += 1
+
+        rows.append(
+            {
+                "id": round_row.id,
+                "market": market.title if market else "?",
+                "market_type": market.market_type if market else "",
+                "starts_at": market.starts_at if market else None,
+                "phase": round_row.phase,
+                "status": round_row.status,
+                "submitted": state["submitted"],
+                "awaiting": state["awaiting"],
+                "pending_approval": pending,
+                "created_at": round_row.created_at,
+            }
+        )
+    return templates.TemplateResponse(
+        "rounds.html", {**_base_context(request), "rounds": rows}
     )
 
 

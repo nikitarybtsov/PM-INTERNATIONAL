@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="card">
+  <h2>Раунды</h2>
+  <p class="muted">
+    Матчи, по которым модели дали прогноз. Оранжевым отмечены раунды, где
+    заявки ждут вашего одобрения.
+  </p>
+
+  {% if not rounds %}
+  <p class="muted">Раундов пока нет — откройте матч на вкладке «Матчи»
+     и зафиксируйте snapshot.</p>
+  {% else %}
+  <table>
+    <tr>
+      <th>#</th><th>Матч</th><th>Фаза</th><th>Статус</th>
+      <th>Подали</th><th>Ждём</th><th class="num">К одобрению</th><th></th>
+    </tr>
+    {% for r in rounds %}
+    <tr class="{{ 'row-attention' if r.pending_approval else '' }}">
+      <td>{{ r.id }}</td>
+      <td>
+        {{ r.market[:56] }}
+        {% if r.starts_at %}<div class="muted">старт {{ r.starts_at }}</div>{% endif %}
+      </td>
+      <td>{{ r.phase }}</td>
+      <td>
+        <span class="pill status-{{ r.status|lower }}">{{ r.status }}</span>
+      </td>
+      <td>{{ r.submitted|join(', ') or '—' }}</td>
+      <td class="muted">{{ r.awaiting|join(', ') or '—' }}</td>
+      <td class="num">
+        {% if r.pending_approval %}<b class="attention">{{ r.pending_approval }}</b>
+        {% else %}—{% endif %}
+      </td>
+      <td><a class="btn-link" href="/ui/rounds/{{ r.id }}">Открыть</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+</div>
+
+{% endblock %}
