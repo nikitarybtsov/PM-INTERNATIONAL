@@ -10,7 +10,7 @@ from app.adapters.market_data import MarketNotAvailable
 from app.api.schemas import OperatorNotesRequest, SeedRequest, SettleRequest
 from app.db.base import get_db
 from app.db.models import Market, Settlement
-from app.services import audit
+from app.services import audit, notifications
 from app.services import seed as seed_service
 from app.services import settlement as settlement_service
 from app.services.snapshots import provider_for, upsert_market
@@ -130,6 +130,7 @@ def settle(market_id: int, payload: SettleRequest, db: Session = Depends(get_db)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    notifications.market_settled(db, market, row.winning_outcome)
     return {"market_id": market.id, "winning_outcome": row.winning_outcome, "settled": True}
 
 

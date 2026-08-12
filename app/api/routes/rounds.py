@@ -24,6 +24,7 @@ from app.db.models import (
     Snapshot,
 )
 from app.schemas.decision import TradeDecisionInput
+from app.services import notifications
 from app.services import rounds as rounds_service
 from app.services import snapshots as snapshot_service
 
@@ -192,6 +193,7 @@ def execute(round_id: int, db: Session = Depends(get_db)) -> dict:
         report = rounds_service.execute_round(db, row)
     except rounds_service.RoundStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    notifications.round_executed(db, row, report)
     return {"round_id": row.id, "status": row.status, "report": report}
 
 

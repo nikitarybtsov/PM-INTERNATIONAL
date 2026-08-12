@@ -5,7 +5,9 @@ from __future__ import annotations
 from app.adapters.participants.base import ParticipantAdapter
 from app.adapters.participants.claude import ClaudeAdapter
 from app.adapters.participants.codex import CodexAdapter
+from app.adapters.participants.codex_cli import CodexCliAdapter
 from app.adapters.participants.titan import TitanManualAdapter
+from app.config import get_settings
 from app.constants import ParticipantKey
 
 _overrides: dict[str, ParticipantAdapter] = {}
@@ -27,6 +29,8 @@ def get_participant_adapter(key: str) -> ParticipantAdapter:
     if key in _overrides:
         return _overrides[key]
     if key == ParticipantKey.CODEX.value:
+        if get_settings().codex_transport == "cli":
+            return CodexCliAdapter()
         return CodexAdapter()
     if key == ParticipantKey.CLAUDE.value:
         return ClaudeAdapter()

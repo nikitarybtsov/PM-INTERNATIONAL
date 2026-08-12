@@ -68,8 +68,15 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
 
     anthropic_api_key: str | None = Field(default=None, repr=False)
-    anthropic_model: str = "claude-opus-4-5"
+    anthropic_model: str = "claude-opus-5"
     anthropic_base_url: str = "https://api.anthropic.com"
+
+    # Codex через локальный CLI вместо HTTP API (выбор оператора).
+    # Требует установленного и авторизованного `codex` на сервере.
+    codex_transport: Literal["api", "cli"] = "api"
+    codex_cli_command: str = "codex exec --skip-git-repo-check"
+    codex_cli_timeout_seconds: float = 180.0
+    codex_cli_model_label: str = "codex-cli"
 
     participant_timeout_seconds: float = 60.0
     participant_max_retries: int = 2
@@ -80,6 +87,30 @@ class Settings(BaseSettings):
     paper_allow_partial_fill: bool = True
 
     export_dir: str = "./exports"
+
+    # --- Telegram --------------------------------------------------------
+    telegram_bot_token: str | None = Field(default=None, repr=False)
+    telegram_chat_id: str | None = None
+    telegram_timeout_seconds: float = 15.0
+
+    # --- Доступ к панели --------------------------------------------------
+    panel_user: str = "operator"
+    panel_password: str | None = Field(default=None, repr=False)
+    titan_access_token: str | None = Field(default=None, repr=False)
+    public_base_url: str = "http://localhost:8000"
+
+    # --- Автоматический планировщик раундов -------------------------------
+    scheduler_enabled: bool = False
+    scheduler_interval_seconds: int = 300
+    scheduler_open_before_match_minutes: int = 240
+    scheduler_min_before_match_minutes: int = 20
+    scheduler_max_open_rounds: int = 3
+    scheduler_market_query: str = "Dota"
+    # Что делать, если Титан не успел подать решение до дедлайна.
+    # cancel — раунд отменяется, статистика не портится (безопасно по умолчанию)
+    # hold   — за Титана записывается HOLD, раунд исполняется
+    titan_timeout_policy: Literal["cancel", "hold"] = "cancel"
+    titan_deadline_minutes: int = 15
 
     @property
     def risk(self) -> RiskLimits:
@@ -95,6 +126,17 @@ class Settings(BaseSettings):
 
     def has_anthropic(self) -> bool:
         return bool(self.anthropic_api_key and self.anthropic_api_key.strip())
+
+    def has_telegram(self) -> bool:
+        return bool(
+            self.telegram_bot_token
+            and self.telegram_bot_token.strip()
+            and self.telegram_chat_id
+            and str(self.telegram_chat_id).strip()
+        )
+
+    def panel_auth_enabled(self) -> bool:
+        return bool(self.panel_password and self.panel_password.strip())
 
     def safe_dump(self) -> dict[str, object]:
         """Дамп конфигурации без секретов — пригоден для логов и /health."""
