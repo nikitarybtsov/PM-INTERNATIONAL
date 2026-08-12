@@ -36,9 +36,15 @@ def _timestamp() -> str:
 
 # ---------------------------------------------------------------------------
 def rounds_table(db: Session) -> list[dict]:
-    """Плоская таблица «раунд × участник» — основа CSV-экспорта."""
+    """Плоская таблица «раунд × участник» — основа CSV-экспорта.
+
+    В выгрузку попадают только раскрытые (исполненные) раунды: экспорт не должен
+    становиться обходным путём подсмотреть чужое решение до фиксации.
+    """
     rows: list[dict] = []
-    for round_row in db.scalars(select(Round).order_by(Round.id)):
+    for round_row in db.scalars(
+        select(Round).where(Round.status.in_(stats_service.REVEALED_STATUSES)).order_by(Round.id)
+    ):
         market = db.get(Market, round_row.market_id)
         for decision in db.scalars(
             select(Decision).where(Decision.round_id == round_row.id).order_by(Decision.id)

@@ -8,8 +8,17 @@ from sqlalchemy.orm import Session
 from app.adapters.participants.prompting import build_prompt
 from app.constants import Phase, RoundStatus
 from app.db.models import Market
+from app.schemas.decision import TradeDecisionInput
 from app.services import portfolio as pf
 from app.services import rounds as rounds_service
+
+TITAN_HOLD = TradeDecisionInput(
+    action="HOLD",
+    estimated_probability=0.5,
+    stake_usdc=0,
+    confidence=0.5,
+    short_reason="пропускаю раунд",
+)
 
 
 # --- раздельные банки -------------------------------------------------------
@@ -134,6 +143,76 @@ def test_round_page_hides_decisions_before_execution(db: Session, seeded, market
         reason = (decision.payload or {}).get("short_reason")
         if reason:
             assert reason not in page.text
+
+
+def test_stats_do_not_leak_unrevealed_decisions(db: Session, seeded, market: Market, client):
+    """Счётчики и отчёты не выдают, что Codex/Claude уже поставили."""
+    from app.services import stats as stats_service
+
+    round_row = rounds_service.create_round(db, market, Phase.PREMATCH)
+    db.commit()
+    client.post(f"/api/rounds/{round_row.id}/request-ai")
+    db.expire_all()
+
+    board = stats_service.scoreboard(db)
+    assert all(p["bets_count"] == 0 for p in board["participants"])
+    assert all(p["hold_count"] == 0 for p in board["participants"])
+    assert stats_service.disagreements(db) == []
+
+    # после исполнения данные появляются
+    rounds_service.submit_manual_decision(
+        db, db.get(type(round_row), round_row.id), "titan", TITAN_HOLD
+    )
+    rounds_service.execute_round(db, db.get(type(round_row), round_row.id))
+    db.commit()
+
+    board = stats_service.scoreboard(db)
+    assert sum(p["bets_count"] + p["hold_count"] for p in board["participants"]) == 3
+    assert len(stats_service.disagreements(db)) == 1
+
+
+def test_export_excludes_unrevealed_rounds(db: Session, seeded, market: Market, client):
+    """Экспорт не должен быть обходным путём подсмотреть чужое решение."""
+    from app.services import export as export_service
+
+    round_row = rounds_service.create_round(db, market, Phase.PREMATCH)
+    db.commit()
+    client.post(f"/api/rounds/{round_row.id}/request-ai")
+    db.expire_all()
+
+    assert export_service.rounds_table(db) == []
+    csv_text = client.get("/api/export/csv").text
+    for decision in rounds_service.decisions_for(db, round_row.id):
+        reason = (decision.payload or {}).get("short_reason")
+        if reason:
+            assert reason not in csv_text
+
+
+def test_audit_log_stores_fingerprint_not_decision(db: Session, seeded, market: Market, client):
+    """Журнал аудита доказывает неизменность, не раскрывая содержимое."""
+    round_row = rounds_service.create_round(db, market, Phase.PREMATCH)
+    db.commit()
+    client.post(f"/api/rounds/{round_row.id}/request-ai")
+
+    audit_entries = client.get("/api/stats/audit").json()
+    submits = [e for e in audit_entries if e["entity_type"] == "decision" and e["action"] == "submit"]
+    assert submits
+    for entry in submits:
+        assert "decision_fingerprint" in entry["after"]
+        assert "estimated_probability" not in entry["after"]
+        assert "stake_usdc" not in entry["after"]
+
+    # отпечаток действительно соответствует сохранённому решению
+    for decision in rounds_service.decisions_for(db, round_row.id):
+        expected = rounds_service.decision_fingerprint(decision.payload)
+        assert any(e["after"]["decision_fingerprint"] == expected for e in submits)
+
+    # и содержимое решений не встречается в журнале целиком
+    blob = str(audit_entries)
+    for decision in rounds_service.decisions_for(db, round_row.id):
+        reason = (decision.payload or {}).get("short_reason")
+        if reason:
+            assert reason not in blob
 
 
 def test_round_locks_only_after_all_three(db: Session, seeded, market: Market, client):

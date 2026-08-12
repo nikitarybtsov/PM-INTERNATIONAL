@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -50,6 +52,16 @@ class RoundStateError(RuntimeError):
 
 class DecisionAlreadySubmitted(RuntimeError):
     """Решение участника уже зафиксировано и не подлежит изменению."""
+
+
+def decision_fingerprint(payload: dict) -> str:
+    """SHA-256 содержимого решения.
+
+    Пишется в аудит вместо самого решения: доказывает неизменность записи,
+    ничего не раскрывая. Сверить можно после раскрытия раунда.
+    """
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -193,11 +205,14 @@ def _store_decision(
         entity_id=row.id,
         action="submit",
         actor=participant.key,
+        # В аудит пишется отпечаток, а не содержимое: журнал доступен по API и не
+        # должен раскрывать чужое решение до фиксации. Хеша достаточно, чтобы
+        # доказать, что сохранённое решение не переписали задним числом.
         after={
-            "action": row.action,
-            "stake_usdc": row.stake_usdc,
-            "estimated_probability": row.estimated_probability,
+            "decision_fingerprint": decision_fingerprint(row.payload),
             "model": row.model_name,
+            "prompt_version": row.prompt_version,
+            "locked": row.locked,
         },
         note="решение зафиксировано и заблокировано от редактирования",
     )

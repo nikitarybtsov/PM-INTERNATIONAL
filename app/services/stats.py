@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.constants import Action, DecisionStatus, PositionStatus, money
+from app.constants import Action, DecisionStatus, PositionStatus, RoundStatus, money
 from app.db.models import (
     Decision,
     LedgerEntry,
@@ -30,6 +30,23 @@ from app.services import portfolio as pf
 
 EPS = 1e-9
 CLAMP = 1e-6
+
+# Статусы, при которых решения раунда уже раскрыты. Статистика по решениям
+# считается ТОЛЬКО по ним: иначе счётчик ставок или разброс вероятностей выдал бы
+# участникам содержание чужих ответов до фиксации собственного.
+REVEALED_STATUSES = (RoundStatus.EXECUTED.value, RoundStatus.REVEALED.value)
+
+
+def revealed_decisions_query(participant_id: int | None = None):
+    """Решения только из исполненных (раскрытых) раундов."""
+    stmt = (
+        select(Decision)
+        .join(Round, Round.id == Decision.round_id)
+        .where(Round.status.in_(REVEALED_STATUSES))
+    )
+    if participant_id is not None:
+        stmt = stmt.where(Decision.participant_id == participant_id)
+    return stmt
 
 
 @dataclass
@@ -227,9 +244,7 @@ def participant_stats(db: Session, participant: Participant) -> ParticipantStats
     )
     unrealized = paper_engine.unrealized_pnl(db, participant.id, marks)
 
-    decisions = list(
-        db.scalars(select(Decision).where(Decision.participant_id == participant.id))
-    )
+    decisions = list(db.scalars(revealed_decisions_query(participant.id)))
     bets = [d for d in decisions if d.action and d.action != Action.HOLD.value]
     holds = [d for d in decisions if d.action == Action.HOLD.value]
     invalid = [d for d in decisions if d.status != DecisionStatus.VALID.value]
@@ -328,9 +343,15 @@ def biggest_moves(db: Session, limit: int = 5) -> dict:
 
 
 def disagreements(db: Session, limit: int = 10) -> list[dict]:
-    """Раунды, где оценки участников разошлись сильнее всего."""
+    """Раунды, где оценки участников разошлись сильнее всего.
+
+    Учитываются только раскрытые раунды — иначе отчёт показал бы чужие оценки
+    до того, как все подали решения.
+    """
     result = []
-    for round_row in db.scalars(select(Round).order_by(Round.id)):
+    for round_row in db.scalars(
+        select(Round).where(Round.status.in_(REVEALED_STATUSES)).order_by(Round.id)
+    ):
         decisions = list(db.scalars(select(Decision).where(Decision.round_id == round_row.id)))
         probs = {}
         actions = {}

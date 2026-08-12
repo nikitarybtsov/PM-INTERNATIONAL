@@ -22,7 +22,7 @@ risk engine, paper execution, статистика, web-интерфейс, те
 | paper execution | `app/services/paper_engine.py`, `app/services/book.py` |
 | статистика | `app/services/stats.py` |
 | web-интерфейс | `app/web/templates/*.html`, `app/web/static/*` |
-| тесты | `tests/` (120 тестов) |
+| тесты | `tests/` (123 теста) |
 | документация | `README.md`, `IMPLEMENTATION_PLAN.md`, этот файл |
 
 ---
@@ -186,6 +186,10 @@ realized и unrealized PnL, settlement после результата рынк�
 simulated orders, fills, позиции, балансы (ledger), settlement, API errors, prompt/model versions,
 audit events. Изменение задним числом создаёт новую запись аудита, а не переписывает старую.
 
+В `audit_events` для решений хранится **SHA-256-отпечаток** (`decision_fingerprint`), а не
+содержимое: журнал доступен по API, и он не должен раскрывать чужой ответ до фиксации;
+отпечатка достаточно, чтобы доказать неизменность записи, а сверить его можно после раскрытия.
+
 | Таблица | Модель |
 |---------|--------|
 | participants / portfolios / ledger_entries | банки и все движения денег |
@@ -257,7 +261,7 @@ CSV, JSON, красивый HTML-отчёт, таблица результато
 | unit-тесты схем | `tests/test_schemas.py` |
 | тесты risk engine | `tests/test_risk_engine.py` |
 | тесты раздельности банков | `tests/test_isolation.py` |
-| тест отсутствия утечки решений | `tests/test_isolation.py` (API, HTML-страницы, промпты) |
+| тест отсутствия утечки решений | `tests/test_isolation.py` (API, HTML-страницы, промпты, статистика, экспорт, аудит) |
 | тест устаревшего snapshot | `tests/test_rounds_flow.py`, `tests/test_integration_round.py` |
 | тест повторного исполнения | `tests/test_rounds_flow.py`, `tests/test_paper_engine.py` |
 | тест расчёта PnL | `tests/test_paper_engine.py`, `tests/test_stats.py` |
@@ -270,7 +274,7 @@ CSV, JSON, красивый HTML-отчёт, таблица результато
 | README на русском | `README.md` |
 | CHECKLIST.md | этот файл |
 
-**Результат прогона:** `120 passed`.
+**Результат прогона:** `123 passed`.
 
 ---
 
@@ -283,13 +287,13 @@ CSV, JSON, красивый HTML-отчёт, таблица результато
 | 3 | Можно создать матч и snapshot | ✅ | `/ui/markets` → «Зафиксировать snapshot», `POST /api/rounds` |
 | 4 | Codex и Claude возвращают mock-решения | ✅ | `POST /api/rounds/{id}/request-ai`; демо-вывод в README |
 | 5 | Titan вводит решение через интерфейс | ✅ | `/ui/rounds/{id}/titan` |
-| 6 | До фиксации решений ответы участников скрыты | ✅ | `hidden: true` в API; `tests/test_isolation.py` (4 теста) |
+| 6 | До фиксации решений ответы участников скрыты | ✅ | `hidden: true` в API; закрыты и побочные каналы — статистика, расхождения, экспорт, аудит; `tests/test_isolation.py` (7 тестов) |
 | 7 | Risk engine проверяет все три заявки | ✅ | `execute_round` создаёт `RiskEvaluation` для каждого решения; `tests/test_rounds_flow.py::test_execute_produces_orders_and_reasons` |
 | 8 | Paper engine симулирует исполнение | ✅ | `simulated_orders` + `fills` + `positions`; `tests/test_paper_engine.py` |
 | 9 | Scoreboard и PnL обновляются | ✅ | `/`, `GET /api/stats/scoreboard`; `tests/test_stats.py` |
 | 10 | Результат рынка можно установить вручную | ✅ | кнопки на `/ui/markets`, `POST /api/markets/{id}/settle` |
 | 11 | После settlement обновляются банки и статистика | ✅ | `tests/test_paper_engine.py::test_settlement_pays_winner_and_zeroes_loser`, `tests/test_stats.py::test_scoreboard_after_settlement` |
-| 12 | Все основные тесты проходят | ✅ | `120 passed` |
+| 12 | Все основные тесты проходят | ✅ | `123 passed` |
 
 ---
 
