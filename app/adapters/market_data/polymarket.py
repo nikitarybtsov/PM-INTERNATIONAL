@@ -321,6 +321,37 @@ class PolymarketDataProvider(MarketDataProvider):
         asks.sort(key=lambda x: x[0])
         return bids[:10], asks[:10]
 
+    def get_resolution(self, external_id: str) -> str | None:
+        """Итог рынка по данным биржи.
+
+        Закрытый и разрешённый рынок отдаёт outcomePrices ["1","0"] или
+        ["0","1"] — это и есть результат. Пока рынок не закрыт или UMA ещё не
+        подтвердила исход, возвращается None: гасить позиции рано.
+        """
+        try:
+            payload = self._get(f"{self.gamma_url}/markets/{external_id}")
+        except MarketNotAvailable:
+            return None
+        raw = payload[0] if isinstance(payload, list) and payload else payload
+        if not isinstance(raw, dict) or raw.get("closed") is not True:
+            return None
+
+        status = str(raw.get("umaResolutionStatus") or "").lower()
+        if status and status != "resolved":
+            # рынок закрыт, но исход ещё оспаривается — ждём
+            logger.info("рынок %s закрыт, но не разрешён (%s)", external_id, status)
+            return None
+
+        prices = [_to_float(p) for p in _as_list(raw.get("outcomePrices"))]
+        if len(prices) < 2:
+            return None
+        if prices[0] >= 0.99 and prices[1] <= 0.01:
+            return "YES"
+        if prices[1] >= 0.99 and prices[0] <= 0.01:
+            return "NO"
+        # промежуточные цены означают, что рынок ещё не рассчитан окончательно
+        return None
+
     def list_event_markets(self, market: MarketRef) -> list[MarketRef]:
         """Все рынки события одним запросом к Gamma.
 

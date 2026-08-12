@@ -72,6 +72,15 @@ class MarketDataProvider(ABC):
     def get_quote(self, market: MarketRef) -> MarketQuote:
         """Получить текущие цены, стакан и ликвидность."""
 
+    def get_resolution(self, external_id: str) -> str | None:
+        """Итог рынка, если биржа его уже рассчитала: "YES", "NO" или None.
+
+        Работает одинаково для любого типа рынка — победителя серии, тотала,
+        форы, экзотики: у всех бинарная структура, и Polymarket разрешает их
+        сам. Оператору не нужно вводить результат руками.
+        """
+        return None
+
     def list_event_markets(self, market: MarketRef) -> list[MarketRef]:
         """Все рынки того же матча: карты, тоталы, форы, экзотика.
 

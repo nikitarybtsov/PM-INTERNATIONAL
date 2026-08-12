@@ -116,9 +116,29 @@ def set_notes(
     return _market_dto(db, market)
 
 
+@router.post("/settle-auto")
+def settle_auto(db: Session = Depends(get_db)) -> dict:
+    """Забрать результаты с Polymarket и рассчитать всё, что уже разрешено.
+
+    Работает для любых рынков — победитель серии, тотал, фора, экзотика.
+    Ручной ввод результата остаётся как запасной путь, если биржа затянет
+    с разрешением или потребуется вмешательство.
+    """
+    report = settlement_service.auto_settle(db)
+    for item in report["settled"]:
+        market = db.get(Market, item["market_id"])
+        if market is not None:
+            notifications.market_settled(db, market, item["outcome"])
+    return report
+
+
 @router.post("/{market_id}/settle")
 def settle(market_id: int, payload: SettleRequest, db: Session = Depends(get_db)) -> dict:
-    """Оператор вручную выставляет результат рынка; банки пересчитываются."""
+    """Оператор вручную выставляет результат рынка; банки пересчитываются.
+
+    Обычно не нужен: результаты приезжают сами через `/settle-auto`. Оставлен
+    на случай, когда биржа затягивает с разрешением, а расчёт нужен сейчас.
+    """
     market = db.get(Market, market_id)
     if market is None:
         raise HTTPException(status_code=404, detail="рынок не найден")

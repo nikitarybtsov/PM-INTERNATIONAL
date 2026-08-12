@@ -90,3 +90,54 @@ def settle_market(
         note=note,
     )
     return settlement
+
+
+def auto_settle(db: Session, *, actor: str = "auto") -> dict:
+    """Забрать результаты рынков с биржи и рассчитать всё, что уже разрешено.
+
+    Оператору не нужно вводить исходы руками: Polymarket сам разрешает рынки
+    любого типа — победителя серии, тотал, фору, экзотику. Мы лишь спрашиваем
+    итог и гасим позиции.
+
+    Рынки, которые биржа ещё не разрешила (идёт спор через UMA или матч не
+    закончен), пропускаются — вернёмся к ним на следующем проходе.
+    """
+    from app.adapters.market_data import MarketNotAvailable
+    from app.services.snapshots import provider_for
+
+    provider = provider_for(db)
+    settled_ids = {s.market_id for s in db.scalars(select(Settlement))}
+
+    # Интересуют только рынки, где у кого-то есть открытая позиция: гонять
+    # запросы по всему каталогу незачем.
+    market_ids = {
+        row.market_id
+        for row in db.scalars(
+            select(Position).where(Position.status == PositionStatus.OPEN.value)
+        )
+    }
+
+    report = {"checked": 0, "settled": [], "pending": [], "errors": []}
+    for market_id in sorted(market_ids - settled_ids):
+        market = db.get(Market, market_id)
+        if market is None:
+            continue
+        report["checked"] += 1
+        try:
+            outcome = provider.get_resolution(market.external_id)
+        except (MarketNotAvailable, Exception) as exc:  # noqa: BLE001
+            report["errors"].append({"market_id": market_id, "error": str(exc)[:200]})
+            continue
+
+        if outcome is None:
+            report["pending"].append({"market_id": market_id, "title": market.title})
+            continue
+
+        settle_market(
+            db, market, outcome, actor=actor,
+            note="результат получен от Polymarket автоматически",
+        )
+        report["settled"].append(
+            {"market_id": market_id, "title": market.title, "outcome": outcome}
+        )
+    return report
