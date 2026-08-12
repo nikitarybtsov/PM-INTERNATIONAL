@@ -86,6 +86,10 @@ class TradeDecision(TradeDecisionInput):
     market_id: int
     market_probability: float = Field(ge=0.0, le=1.0)
     edge: float
+    # Edge после комиссии тейкера — именно он определяет, есть ли смысл входить.
+    # Сырой edge оставлен рядом, чтобы в панели было видно, сколько съела биржа.
+    net_edge: float = 0.0
+    taker_fee_usdc: float = 0.0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     model_name: str
     model_version: str
@@ -103,6 +107,7 @@ class TradeDecision(TradeDecisionInput):
         model_name: str,
         model_version: str,
         prompt_version: str,
+        fee_schedule: object = None,
     ) -> TradeDecision:
         """Собрать полное решение, посчитав edge относительно рыночной вероятности.
 
@@ -111,7 +116,13 @@ class TradeDecision(TradeDecisionInput):
         исхода, который участник покупает. Поэтому для BUY_NO обе величины нужно
         привести к одному исходу: P(NO) = 1 - P(YES), иначе edge сравнивает
         вероятность YES с ценой NO и получается бессмысленное число.
+
+        `net_edge` — то же самое после комиссии тейкера. Мы всегда тейкер, а на
+        спортивных рынках комиссия достигает 1.25% от вложенного у цены 0.5,
+        поэтому сделка с сырым edge в полпроцента на деле убыточна.
         """
+        from app.services.fees import FeeSchedule, net_edge, taker_fee
+
         outcome = decision.outcome
         probability_of_outcome = (
             1.0 - decision.estimated_probability
@@ -119,7 +130,23 @@ class TradeDecision(TradeDecisionInput):
             else decision.estimated_probability
         )
         edge = round(probability_of_outcome - market_probability, 6)
+
+        schedule = fee_schedule if isinstance(fee_schedule, FeeSchedule) else FeeSchedule()
+        if outcome is None:
+            # HOLD и SELL комиссию на входе не платят
+            net = edge
+            fee = 0.0
+        else:
+            net = net_edge(probability_of_outcome, market_probability, schedule)
+            size = (
+                decision.stake_usdc / market_probability
+                if market_probability > 0
+                else 0.0
+            )
+            fee = taker_fee(size, market_probability, schedule)
         return cls(
+            net_edge=net,
+            taker_fee_usdc=fee,
             **decision.model_dump(),
             participant_id=participant_id,
             snapshot_id=snapshot_id,

@@ -21,7 +21,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ---------------------------------------------------------------------------
 LIVE_TRADING_ENABLED: bool = False
 
-PROMPT_VERSION = "v1"
+# v2 — в промпт добавлена комиссия тейкера и порог безубыточности.
+# Версия участвует в аудите: решения, принятые по разным промптам, несравнимы.
+PROMPT_VERSION = "v2"
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -74,6 +76,17 @@ class Settings(BaseSettings):
     polymarket_history_interval: str = "1d"
     polymarket_history_fidelity: int = 60
     polymarket_history_points: int = 12
+
+    # --- Комиссия Polymarket (sports_fees_v2) ------------------------------
+    # fee = C × rate × p × (1 − p); платит только тейкер, берётся при сделке.
+    # Значение по умолчанию сверено с живым feeSchedule рынков The International.
+    polymarket_taker_fee_rate: float = 0.05
+    # Тир Taker Rebate Program. Bronze (3%) начинается с $2 000 weighted volume
+    # за 30 дней — на банке $1 000 недостижимо, поэтому по умолчанию 0.
+    polymarket_taker_rebate_rate: float = 0.0
+    # Ограничения биржи: меньше минимума ордер отклоняется, цена кратна тику.
+    polymarket_min_order_usdc: float = 5.0
+    polymarket_price_tick: float = 0.01
 
     # участники (ключи только из окружения)
     openai_api_key: str | None = Field(default=None, repr=False)

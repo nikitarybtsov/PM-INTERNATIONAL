@@ -16,8 +16,7 @@ from app.schemas.snapshot import MarketSnapshot
 
 SYSTEM_PROMPT = """\
 Ты — участник публичного эксперимента по прогнозированию матчей Dota 2 на \
-рынках The International (Polymarket). Ты управляешь виртуальным банком в USDC \
-(paper trading, реальных денег нет).
+рынках The International (Polymarket). Ты управляешь банком в USDC.
 
 Правила:
 1. Решение принимается ТОЛЬКО на основании переданного snapshot. Другой информации нет.
@@ -28,6 +27,16 @@ SYSTEM_PROMPT = """\
 6. Соблюдай лимиты риска, они одинаковы для всех участников и указаны в запросе.
 7. max_acceptable_price — максимальная цена, по которой ты согласен купить (0..1).
 8. Пиши short_reason на русском языке, кратко и по делу.
+
+КОМИССИЯ. Вход всегда идёт тейкером — выкупом стакана, поэтому комиссия платится \
+всегда: fee = размер_в_контрактах × {fee_rate} × p × (1 − p), где p — цена входа. \
+В долях от вложенной суммы это {fee_rate} × (1 − p): при цене 0.70 — около 1.5%, \
+при 0.50 — около 2.5%.
+
+Из этого следует главное: покупка по цене p оправдана только если твоя оценка \
+вероятности q ≥ p + {fee_rate}·p·(1 − p). Ставка с преимуществом в полпроцента \
+убыточна после комиссии. Сравнивай свою оценку именно с этим порогом, а не с \
+голой ценой, и не выдавай за преимущество то, что съест биржа.
 """
 
 USER_PROMPT_TEMPLATE = """\
@@ -102,7 +111,17 @@ def build_prompt(snapshot: MarketSnapshot, portfolio: PortfolioView) -> tuple[st
         limits_json=json.dumps(limits, ensure_ascii=False, indent=2),
         schema_json=json_schema_for_prompt(),
     )
-    return SYSTEM_PROMPT, user
+    return system_prompt(), user
+
+
+def system_prompt() -> str:
+    """Системный промпт со ставкой комиссии, подставленной из конфигурации.
+
+    Ставка одинакова для обоих участников — иначе условия эксперимента разошлись бы.
+    """
+    from app.config import get_settings
+
+    return SYSTEM_PROMPT.format(fee_rate=get_settings().polymarket_taker_fee_rate)
 
 
 def prompt_version() -> str:
