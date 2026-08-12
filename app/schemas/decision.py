@@ -104,8 +104,21 @@ class TradeDecision(TradeDecisionInput):
         model_version: str,
         prompt_version: str,
     ) -> TradeDecision:
-        """Собрать полное решение, посчитав edge относительно рыночной вероятности."""
-        edge = round(decision.estimated_probability - market_probability, 6)
+        """Собрать полное решение, посчитав edge относительно рыночной вероятности.
+
+        `estimated_probability` — всегда вероятность исхода YES (так сформулирован
+        промпт и так считается Brier score). `market_probability` — цена того
+        исхода, который участник покупает. Поэтому для BUY_NO обе величины нужно
+        привести к одному исходу: P(NO) = 1 - P(YES), иначе edge сравнивает
+        вероятность YES с ценой NO и получается бессмысленное число.
+        """
+        outcome = decision.outcome
+        probability_of_outcome = (
+            1.0 - decision.estimated_probability
+            if outcome == "NO"
+            else decision.estimated_probability
+        )
+        edge = round(probability_of_outcome - market_probability, 6)
         return cls(
             **decision.model_dump(),
             participant_id=participant_id,

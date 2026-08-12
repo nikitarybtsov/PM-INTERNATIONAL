@@ -126,6 +126,55 @@ def test_edge_is_computed_from_market_probability():
     assert full.participant_id == "codex"
 
 
+def test_edge_for_buy_no_uses_probability_of_no():
+    """estimated_probability — всегда P(YES), а market_probability для BUY_NO —
+    цена NO. Без приведения к одному исходу edge превращается в мусор."""
+    inp = TradeDecisionInput(
+        action=Action.BUY_NO,
+        estimated_probability=0.6226,  # участник считает, что YES победит
+        stake_usdc=34.19,
+        max_acceptable_price=0.33,
+        confidence=0.647,
+        short_reason="беру NO: 0.3774 против цены 0.31",
+    )
+    full = TradeDecision.build(
+        decision=inp,
+        participant_id="codex",
+        snapshot_id=1,
+        market_id=1,
+        market_probability=0.31,  # цена исхода NO
+        model_name="m",
+        model_version="v",
+        prompt_version="v1",
+    )
+    # P(NO) = 1 - 0.6226 = 0.3774; edge = 0.3774 - 0.31
+    assert full.edge == pytest.approx(0.0674)
+    # прежняя формула давала 0.6226 - 0.31 = +0.3126 — несуществующий край
+    assert full.edge < 0.1
+
+
+def test_edge_is_negative_when_buying_overpriced_no():
+    inp = TradeDecisionInput(
+        action=Action.BUY_NO,
+        estimated_probability=0.8,  # P(NO) = 0.2
+        stake_usdc=10,
+        max_acceptable_price=0.4,
+        confidence=0.5,
+        short_reason="переплата за NO",
+    )
+    full = TradeDecision.build(
+        decision=inp,
+        participant_id="titan",
+        snapshot_id=1,
+        market_id=1,
+        market_probability=0.35,
+        model_name="m",
+        model_version="v",
+        prompt_version="v1",
+    )
+    assert full.edge == pytest.approx(-0.15)
+
+
 def test_parse_decision_json_handles_code_fence():
     raw = """```json
     {"action": "HOLD", "estimated_probability": 0.5, "stake_usdc": 0,

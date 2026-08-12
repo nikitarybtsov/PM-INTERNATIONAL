@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.notifiers import get_notifier
 from app.config import get_settings
-from app.constants import RoundStatus
+from app.constants import Action, RoundStatus
 from app.db.models import Market, Participant, RiskEvaluation, Round, SimulatedOrder, Snapshot
 from app.services import rounds as rounds_service
 from app.services import stats as stats_service
@@ -138,8 +138,14 @@ def round_executed(db: Session, round_row: Round, report: dict) -> bool:
 
         lines = [f"\n<b>{_esc(key.upper())}</b> — {_esc(payload.get('action', decision.status))}"]
         if decision.estimated_probability is not None:
+            # market_probability — цена покупаемого исхода, поэтому для BUY_NO
+            # показываем P(NO), а не P(YES): иначе строка сравнивает разные исходы.
+            if decision.action == Action.BUY_NO.value:
+                label, probability = "P(NO)", 1.0 - decision.estimated_probability
+            else:
+                label, probability = "P(YES)", decision.estimated_probability
             lines.append(
-                f"P(YES) {decision.estimated_probability:.3f} против рынка "
+                f"{label} {probability:.3f} против рынка "
                 f"{(decision.market_probability or 0):.3f} · edge "
                 f"{(decision.edge or 0):+.3f}"
             )
