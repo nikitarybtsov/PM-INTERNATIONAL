@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.adapters.market_data import MarketNotAvailable
 from app.api.schemas import ConfirmMapRequest, CreateRoundRequest, ManualDecisionRequest
 from app.config import get_settings
-from app.constants import ParticipantKey, Phase
+from app.constants import ParticipantKey, Phase, RoundStatus
 from app.db.base import get_db
 from app.db.models import (
     Decision,
@@ -28,6 +30,8 @@ from app.schemas.decision import TradeDecisionInput
 from app.services import notifications
 from app.services import rounds as rounds_service
 from app.services import snapshots as snapshot_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rounds", tags=["rounds"])
 
@@ -70,7 +74,58 @@ def create_round(payload: CreateRoundRequest, db: Session = Depends(get_db)) -> 
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return rounds_service.public_round_state(db, row)
+
+    notifications.round_opened(db, row)
+    return _autopilot(db, row)
+
+
+def _autopilot(db: Session, row) -> dict:
+    """Довести раунд от снимка до экрана одобрения без участия оператора.
+
+    Смысл в том, чтобы после нажатия «Зафиксировать snapshot» человеку не
+    приходилось дёргать ещё две кнопки: ИИ запрашиваются сами, risk engine
+    считает, а оператор получает в Telegram ссылку и одобряет.
+
+    Сбой на любом шаге не роняет раунд: он просто останавливается там, где
+    остановился, и его можно продолжить руками.
+    """
+    settings = get_settings()
+    state = rounds_service.public_round_state(db, row)
+    if not settings.auto_request_ai_on_snapshot:
+        return state
+
+    try:
+        stored = rounds_service.request_ai_decisions(db, row)
+        # ORM-объекты наружу не отдаём — только факт и статус
+        collected = {
+            db.get(Participant, d.participant_id).key: d.status for d in stored
+        }
+    except Exception as exc:  # noqa: BLE001 — раунд остаётся открытым
+        logger.exception("автозапрос ИИ не удался")
+        return {**state, "autopilot_error": str(exc)[:300]}
+
+    state = rounds_service.public_round_state(db, row)
+    if state["status"] != RoundStatus.LOCKED.value:
+        # ждём Титана, если он участвует в раундах
+        return {**state, "ai": collected}
+
+    try:
+        proposals = rounds_service.prepare_round(db, row)
+    except rounds_service.RoundStateError as exc:
+        return {**state, "ai": collected, "autopilot_error": str(exc)[:300]}
+
+    notifications.approval_needed(db, row, proposals)
+    if row.phase == Phase.AFTER_DRAFT.value:
+        executable = [p for p in proposals.values() if p.get("executable")]
+        best = max(executable, key=lambda p: p.get("net_edge") or 0, default=None)
+        notifications.draft_ready(db, row, best)
+
+    return {
+        **rounds_service.public_round_state(db, row),
+        "ai": collected,
+        "proposals": proposals,
+        "approval_required": settings.live_execution_ready(),
+    }
 
 
 @router.post("/between-maps", status_code=201)

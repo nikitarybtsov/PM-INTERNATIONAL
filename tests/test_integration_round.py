@@ -31,17 +31,22 @@ def test_full_paper_trading_round(client: TestClient):
         "/api/rounds", json={"market_id": market_id, "phase": "PREMATCH"}
     )
     assert created.status_code == 201
-    round_id = created.json()["round_id"]
+    body = created.json()
+    round_id = body["round_id"]
+
+    # 4. ИИ запрашиваются автоматически при фиксации снимка: оператору не нужно
+    #    нажимать вторую кнопку. Отключается через AUTO_REQUEST_AI_ON_SNAPSHOT.
+    assert set(body["ai"]) == {"codex", "claude"}
+    assert all(status == "VALID" for status in body["ai"].values())
 
     snapshot = client.get(f"/api/rounds/{round_id}/snapshot").json()
     assert snapshot["stale"] is False
     assert snapshot["payload"]["operator_context"] == "Bo3, замен в составах нет"
     assert snapshot["payload"]["yes_book"]["asks"]
 
-    # 4. решения ИИ (mock-режим, ключи не нужны)
-    ai = client.post(f"/api/rounds/{round_id}/request-ai").json()
-    assert set(ai["collected"]) == {"codex", "claude"}
-    assert all(status == "VALID" for status in ai["statuses"].values())
+    # повторный запрос ничего не дублирует
+    again = client.post(f"/api/rounds/{round_id}/request-ai").json()
+    assert again["collected"] == []
 
     # 5. до подачи решения Титана всё скрыто
     hidden = client.get(f"/api/rounds/{round_id}/decisions").json()

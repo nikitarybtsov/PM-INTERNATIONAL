@@ -201,6 +201,23 @@ class Settings(BaseSettings):
     titan_timeout_policy: Literal["cancel", "hold"] = "cancel"
     titan_deadline_minutes: int = 15
 
+    # --- Автоматизация цикла ----------------------------------------------
+    # Участвует ли Титан в раундах наравне с ИИ.
+    #   true  — классический эксперiment: раунд ждёт решения человека через форму
+    #           и считает ему Brier score наравне с моделями;
+    #   false — Титан торгует со своего кошелька руками, его сделки видны на
+    #           вкладке «Сделки», а раунд его не ждёт: два ИИ отработали —
+    #           можно одобрять.
+    # По умолчанию true, чтобы поведение по умолчанию оставалось полным
+    # трёхсторонним экспериментом; на боевом сервере включено false.
+    titan_participates_in_rounds: bool = True
+    # Зафиксировал снимок — Codex и Claude запрашиваются сами, затем risk
+    # engine. Оператору остаётся открыть ссылку и одобрить.
+    auto_request_ai_on_snapshot: bool = True
+    # Результаты рынков забираются с Polymarket по расписанию.
+    auto_settle_enabled: bool = True
+    auto_settle_interval_seconds: int = 600
+
     @property
     def risk(self) -> RiskLimits:
         return RiskLimits()

@@ -35,7 +35,7 @@ from app.config import get_settings
 from app.constants import MarketStatus, Phase, RoundStatus
 from app.db.models import Market, Participant, Round, Settlement
 from app.schemas.decision import TradeDecisionInput
-from app.services import notifications
+from app.services import notifications, settlement
 from app.services import rounds as rounds_service
 from app.services import seed as seed_service
 
@@ -63,6 +63,7 @@ class TickResult:
     rounds_executed: list[int] = field(default_factory=list)
     rounds_cancelled: list[int] = field(default_factory=list)
     reminders_sent: list[int] = field(default_factory=list)
+    markets_settled: list[int] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -71,6 +72,7 @@ class TickResult:
             "rounds_opened": self.rounds_opened,
             "rounds_executed": self.rounds_executed,
             "rounds_cancelled": self.rounds_cancelled,
+            "markets_settled": self.markets_settled,
             "reminders_sent": self.reminders_sent,
             "errors": self.errors,
         }
@@ -235,6 +237,20 @@ def tick(db: Session, now: datetime | None = None) -> TickResult:
     settings = get_settings()
     now = now or datetime.now(UTC)
     result = TickResult()
+
+    # Расчёт рынков работает независимо от планировщика раундов: даже если
+    # раунды открываются руками, результаты должны приезжать сами.
+    if settings.auto_settle_enabled:
+        try:
+            report = settlement.auto_settle(db)
+            for item in report["settled"]:
+                market = db.get(Market, item["market_id"])
+                if market is not None:
+                    notifications.market_settled(db, market, item["outcome"])
+                result.markets_settled.append(item["market_id"])
+        except Exception as exc:  # noqa: BLE001 — тик не должен падать целиком
+            logger.exception("сбой автоматического расчёта рынков")
+            result.errors.append(f"settle: {exc}")
 
     if not settings.scheduler_enabled:
         return result

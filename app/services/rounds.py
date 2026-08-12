@@ -47,6 +47,18 @@ AI_PARTICIPANTS = (ParticipantKey.CODEX.value, ParticipantKey.CLAUDE.value)
 ALL_PARTICIPANTS = (*AI_PARTICIPANTS, ParticipantKey.TITAN.value)
 
 
+def expected_participants() -> tuple[str, ...]:
+    """Кого раунд ждёт перед исполнением.
+
+    Титан торгует со своего кошелька руками, и его сделки подтягиваются с
+    биржи. Если он не подаёт решения через форму, раунд не должен висеть в
+    ожидании: два ИИ отработали — можно одобрять и исполнять.
+    """
+    if get_settings().titan_participates_in_rounds:
+        return ALL_PARTICIPANTS
+    return AI_PARTICIPANTS
+
+
 class RoundStateError(RuntimeError):
     """Операция недопустима в текущем статусе раунда."""
 
@@ -346,10 +358,10 @@ def submit_manual_decision(
 
 
 def _maybe_lock(db: Session, round_row: Round) -> None:
-    """Когда все три решения поданы — раунд запирается."""
+    """Когда все ожидаемые решения поданы — раунд запирается."""
     if round_row.status != RoundStatus.OPEN.value:
         return
-    if submitted_keys(db, round_row.id) >= set(ALL_PARTICIPANTS):
+    if submitted_keys(db, round_row.id) >= set(expected_participants()):
         round_row.status = RoundStatus.LOCKED.value
         db.flush()
         audit.record(
@@ -609,7 +621,7 @@ def public_round_state(db: Session, round_row: Round) -> dict:
         "phase": round_row.phase,
         "status": round_row.status,
         "submitted": sorted(keys),
-        "awaiting": sorted(set(ALL_PARTICIPANTS) - keys),
+        "awaiting": sorted(set(expected_participants()) - keys),
         "revealed": is_revealed(round_row),
         "created_at": round_row.created_at,
         "executed_at": round_row.executed_at,
