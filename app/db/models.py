@@ -195,9 +195,19 @@ class Decision(Base, TimestampMixin):
     estimated_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
     market_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
     edge: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # edge после комиссии тейкера — по нему решается, стоит ли входить
+    net_edge: Mapped[float | None] = mapped_column(Float, nullable=True)
+    taker_fee_usdc: Mapped[float | None] = mapped_column(Float, nullable=True)
     stake_usdc: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_acceptable_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # Одобрение оператора. В боевом режиме без него сделка не исполняется —
+    # это третий предохранитель, см. app/config.py.
+    approved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Реальный ордер на бирже, если сделка исполнялась вживую
+    live_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     model_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     model_version: Mapped[str | None] = mapped_column(String(128), nullable=True)

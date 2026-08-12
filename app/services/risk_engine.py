@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import RiskLimits, get_settings
@@ -415,17 +416,24 @@ def persist_evaluation(
             "expected_slippage_bps": result.expected_slippage_bps,
         }
     )
-    evaluation = RiskEvaluation(
-        decision_id=decision.id,
-        verdict=result.verdict.value,
-        decision_before=before,
-        decision_after=after,
-        requested_stake=money(ctx.stake_usdc),
-        approved_stake=result.approved_stake,
-        reasons=result.reasons_payload(),
-        limits_snapshot=ctx.limits.model_dump(),
+    # Оценка на решение одна: risk engine прогоняется и при подготовке раунда,
+    # и при исполнении, а между ними оператор может обновить подготовку. Поэтому
+    # запись обновляется, а не дублируется — иначе UNIQUE-ограничение падает.
+    # Каждая переоценка всё равно попадает в аудит отдельным событием.
+    evaluation = db.scalar(
+        select(RiskEvaluation).where(RiskEvaluation.decision_id == decision.id)
     )
-    db.add(evaluation)
+    if evaluation is None:
+        evaluation = RiskEvaluation(decision_id=decision.id)
+        db.add(evaluation)
+
+    evaluation.verdict = result.verdict.value
+    evaluation.decision_before = before
+    evaluation.decision_after = after
+    evaluation.requested_stake = money(ctx.stake_usdc)
+    evaluation.approved_stake = result.approved_stake
+    evaluation.reasons = result.reasons_payload()
+    evaluation.limits_snapshot = ctx.limits.model_dump()
     db.flush()
     audit.record(
         db,

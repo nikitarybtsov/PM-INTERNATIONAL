@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from app.adapters.participants import get_participant_adapter
 from app.adapters.participants.base import ParticipantResult
 from app.adapters.participants.titan import TitanManualAdapter
+from app.config import get_settings
 from app.constants import (
     Action,
     DecisionStatus,
@@ -188,6 +189,8 @@ def _store_decision(
         estimated_probability=full.estimated_probability,
         market_probability=full.market_probability,
         edge=full.edge,
+        net_edge=full.net_edge,
+        taker_fee_usdc=full.taker_fee_usdc,
         stake_usdc=full.stake_usdc,
         max_acceptable_price=full.max_acceptable_price,
         confidence=full.confidence,
@@ -350,17 +353,144 @@ def _maybe_lock(db: Session, round_row: Round) -> None:
 
 
 # ---------------------------------------------------------------------------
+def approve_decision(
+    db: Session, round_row: Round, participant_key: str, *, actor: str = "operator"
+) -> Decision:
+    """Оператор одобряет конкретную заявку к исполнению.
+
+    В боевом режиме это третий предохранитель: без одобрения ордер не уйдёт
+    на биржу. Одобрение фиксируется в аудите и не может быть отозвано молча —
+    снятие пишет отдельную запись.
+    """
+    if round_row.status in (RoundStatus.EXECUTED.value, RoundStatus.REVEALED.value):
+        raise RoundStateError("раунд уже исполнен, одобрять нечего")
+
+    participant = get_participant(db, participant_key)
+    decision = db.scalar(
+        select(Decision).where(
+            Decision.round_id == round_row.id,
+            Decision.participant_id == participant.id,
+        )
+    )
+    if decision is None:
+        raise RoundStateError(f"решение участника {participant_key} не найдено")
+    if decision.status != DecisionStatus.VALID.value:
+        raise RoundStateError(
+            f"решение участника {participant_key} невалидно ({decision.status})"
+        )
+
+    decision.approved_by = actor
+    decision.approved_at = datetime.now(UTC)
+    db.flush()
+    audit.record(
+        db,
+        entity_type="decision",
+        entity_id=decision.id,
+        action="approve",
+        actor=actor,
+        after={"participant": participant_key, "approved_at": decision.approved_at.isoformat()},
+        note="оператор одобрил заявку к исполнению",
+    )
+    return decision
+
+
+def revoke_approval(
+    db: Session, round_row: Round, participant_key: str, *, actor: str = "operator"
+) -> Decision:
+    """Снять одобрение до исполнения."""
+    if round_row.status in (RoundStatus.EXECUTED.value, RoundStatus.REVEALED.value):
+        raise RoundStateError("раунд уже исполнен")
+    participant = get_participant(db, participant_key)
+    decision = db.scalar(
+        select(Decision).where(
+            Decision.round_id == round_row.id,
+            Decision.participant_id == participant.id,
+        )
+    )
+    if decision is None:
+        raise RoundStateError(f"решение участника {participant_key} не найдено")
+    decision.approved_by = None
+    decision.approved_at = None
+    db.flush()
+    audit.record(
+        db,
+        entity_type="decision",
+        entity_id=decision.id,
+        action="revoke_approval",
+        actor=actor,
+        after={"participant": participant_key},
+        note="оператор снял одобрение",
+    )
+    return decision
+
+
+def prepare_round(db: Session, round_row: Round, *, actor: str = "operator") -> dict:
+    """Прогнать заявки через risk engine и остановиться перед исполнением.
+
+    Отдельный шаг нужен, чтобы оператор видел, что именно уйдёт на биржу:
+    какой размер одобрил risk engine, по какой цене и с какой комиссией.
+    """
+    if round_row.status not in (RoundStatus.LOCKED.value, RoundStatus.AWAITING_APPROVAL.value):
+        raise RoundStateError(
+            f"подготовка возможна после фиксации решений (статус {round_row.status})"
+        )
+
+    snapshot_row = db.get(Snapshot, round_row.snapshot_id)
+    snapshot_model = snapshots.load_snapshot_model(snapshot_row)
+    proposals: dict[str, dict] = {}
+
+    for decision in decisions_for(db, round_row.id):
+        participant = db.get(Participant, decision.participant_id)
+        ctx = risk_engine.build_context(db, decision, snapshot_row, snapshot_model, participant)
+        outcome = risk_engine.evaluate(ctx)
+        risk_engine.persist_evaluation(db, decision, ctx, outcome)
+        proposals[participant.key] = {
+            "participant": participant.key,
+            "verdict": outcome.verdict.value,
+            "requested_stake": ctx.stake_usdc,
+            "approved_stake": outcome.approved_stake,
+            "approved_size": outcome.approved_size,
+            "outcome": outcome.outcome,
+            "expected_avg_price": outcome.expected_avg_price,
+            "reasons": outcome.reasons_payload(),
+            "executable": outcome.is_executable,
+            "approved_by": decision.approved_by,
+            "net_edge": decision.net_edge,
+            "taker_fee_usdc": decision.taker_fee_usdc,
+        }
+
+    round_row.status = RoundStatus.AWAITING_APPROVAL.value
+    db.flush()
+    audit.record(
+        db,
+        entity_type="round",
+        entity_id=round_row.id,
+        action="prepare",
+        actor=actor,
+        after={"proposals": {k: v["verdict"] for k, v in proposals.items()}},
+        note="risk engine отработал, ожидается одобрение оператора",
+    )
+    return proposals
+
+
 def execute_round(db: Session, round_row: Round, *, actor: str = "operator") -> dict:
-    """Шаги 5–7: валидация, risk engine, симуляция исполнения."""
+    """Шаги 5–7: валидация, risk engine, исполнение.
+
+    В боевом режиме исполняются ТОЛЬКО заявки, одобренные оператором;
+    остальные пропускаются с пометкой. В бумажном режиме одобрение не
+    требуется — там нет денег и подтверждать нечего.
+    """
     if round_row.status == RoundStatus.EXECUTED.value:
         raise RoundStateError(f"раунд #{round_row.id} уже исполнен")
     if round_row.status == RoundStatus.REVEALED.value:
         raise RoundStateError(f"раунд #{round_row.id} уже раскрыт")
-    if round_row.status != RoundStatus.LOCKED.value:
+    if round_row.status not in (RoundStatus.LOCKED.value, RoundStatus.AWAITING_APPROVAL.value):
         raise RoundStateError(
             f"исполнение возможно только после фиксации всех решений "
             f"(статус {round_row.status})"
         )
+
+    live = get_settings().live_execution_ready()
 
     snapshot_row = db.get(Snapshot, round_row.snapshot_id)
     snapshot_model = snapshots.load_snapshot_model(snapshot_row)
@@ -379,7 +509,15 @@ def execute_round(db: Session, round_row: Round, *, actor: str = "operator") -> 
             "approved_stake": outcome.approved_stake,
             "reasons": outcome.reasons_payload(),
             "executed": False,
+            "approved_by": decision.approved_by,
         }
+
+        # Боевой режим: без одобрения оператора заявка не исполняется.
+        if live and outcome.is_executable and not decision.approved_by:
+            entry["skipped"] = "не одобрено оператором"
+            report[participant.key] = entry
+            continue
+
         try:
             execution = paper_engine.execute(
                 db,

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.market_data import MarketNotAvailable
 from app.api.schemas import ConfirmMapRequest, CreateRoundRequest, ManualDecisionRequest
+from app.config import get_settings
 from app.constants import ParticipantKey, Phase
 from app.db.base import get_db
 from app.db.models import (
@@ -185,9 +186,67 @@ def submit_decision(
     }
 
 
+@router.post("/{round_id}/prepare")
+def prepare(round_id: int, db: Session = Depends(get_db)) -> dict:
+    """Прогнать заявки через risk engine и показать, что уйдёт на биржу.
+
+    Раунд переходит в AWAITING_APPROVAL: ничего не исполняется, пока оператор
+    не одобрит каждую заявку отдельно.
+    """
+    row = _get_round(db, round_id)
+    try:
+        proposals = rounds_service.prepare_round(db, row)
+    except rounds_service.RoundStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    settings = get_settings()
+    return {
+        "round_id": row.id,
+        "status": row.status,
+        "execution_mode": (
+            "LIVE" if settings.live_execution_ready()
+            else "DRY_RUN" if settings.live_trading_enabled
+            else "PAPER"
+        ),
+        "approval_required": settings.live_execution_ready(),
+        "proposals": proposals,
+    }
+
+
+@router.post("/{round_id}/decisions/{participant_key}/approve")
+def approve(round_id: int, participant_key: str, db: Session = Depends(get_db)) -> dict:
+    """Оператор одобряет заявку участника к исполнению."""
+    row = _get_round(db, round_id)
+    try:
+        decision = rounds_service.approve_decision(db, row, participant_key)
+    except rounds_service.RoundStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "participant": participant_key,
+        "approved_by": decision.approved_by,
+        "approved_at": decision.approved_at,
+    }
+
+
+@router.delete("/{round_id}/decisions/{participant_key}/approve")
+def revoke(round_id: int, participant_key: str, db: Session = Depends(get_db)) -> dict:
+    """Снять одобрение до исполнения."""
+    row = _get_round(db, round_id)
+    try:
+        rounds_service.revoke_approval(db, row, participant_key)
+    except rounds_service.RoundStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"participant": participant_key, "approved_by": None}
+
+
 @router.post("/{round_id}/execute")
 def execute(round_id: int, db: Session = Depends(get_db)) -> dict:
-    """Risk engine + paper execution для всех трёх решений."""
+    """Исполнение заявок.
+
+    В боевом режиме исполняются только одобренные оператором; остальные
+    попадают в отчёт с пометкой и деньги не трогают.
+    """
     row = _get_round(db, round_id)
     try:
         report = rounds_service.execute_round(db, row)

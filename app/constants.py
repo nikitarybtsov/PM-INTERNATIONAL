@@ -53,15 +53,17 @@ class Outcome(StrEnum):
 class RoundStatus(StrEnum):
     """Конечный автомат раунда.
 
-    OPEN      — snapshot зафиксирован, идёт сбор решений (решения скрыты)
-    LOCKED    — все три решения поданы, редактирование запрещено
-    EXECUTED  — risk engine + paper execution отработали
-    REVEALED  — сравнительная таблица раскрыта
-    CANCELLED — раунд отменён оператором
+    OPEN              — snapshot зафиксирован, идёт сбор решений (скрыты)
+    LOCKED            — все решения поданы, редактирование запрещено
+    AWAITING_APPROVAL — risk engine отработал, оператор смотрит и одобряет
+    EXECUTED          — заявки исполнены
+    REVEALED          — сравнительная таблица раскрыта
+    CANCELLED         — раунд отменён оператором
     """
 
     OPEN = "OPEN"
     LOCKED = "LOCKED"
+    AWAITING_APPROVAL = "AWAITING_APPROVAL"
     EXECUTED = "EXECUTED"
     REVEALED = "REVEALED"
     CANCELLED = "CANCELLED"
