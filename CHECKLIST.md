@@ -57,16 +57,28 @@ Payload неизменяем, SHA-256 хранится в `snapshots.payload_has
 
 ## 4. Получение рынков Polymarket — ✅
 
-Read-only адаптер публичных API (Gamma `/markets`, CLOB `/book`): поиск рынков Dota 2 /
-The International, нормализация событий, сохранение сырых ответов, обработка исчезновения и
-изменения рынка. Реальные ордера не отправляются (`supports_live_orders = False`, методов
-отправки нет). Есть mock-провайдер с 5 демо-матчами — проект запускается без сети.
+Read-only адаптер публичных API (Gamma `/events`, `/markets`, CLOB `/book`): поиск рынков
+Dota 2 / The International, нормализация событий, сохранение сырых ответов, обработка
+исчезновения и изменения рынка. Реальные ордера не отправляются
+(`supports_live_orders = False`, методов отправки нет). Есть mock-провайдер с 5 демо-матчами —
+проект запускается без сети.
 
 - `app/adapters/market_data/polymarket.py`, `mock.py`, `base.py`, `factory.py`
 - `app/db/models.py::RawMarketPayload` — сырые ответы
 - `MarketNotAvailable` → рынок помечается `UNAVAILABLE`, событие в аудит
-- Тесты: `tests/test_adapters.py` (нормализация через `httpx.MockTransport`, сетевая ошибка,
-  отсутствующий рынок, read-only), `tests/test_no_live_trading.py`
+- Тесты: `tests/test_adapters.py` (поиск по тегу, отбор основного рынка серии,
+  классификация типов, фильтр начавшихся матчей, нормализация через `httpx.MockTransport`,
+  сетевая ошибка, отсутствующий рынок, read-only), `tests/test_no_live_trading.py`
+
+**Проверено на живом API 12.08.2026:** найдено 8 предстоящих матчей The International 2026
+с реальными ценами и стаканом.
+
+Поиск идёт по тегу Dota 2 в Gamma (`POLYMARKET_GAMMA_TAG_ID`, по умолчанию 102366). Первая
+версия перебирала `/markets?active=true&limit=100` и на живом API возвращала **0 рынков**:
+на Polymarket одновременно живут тысячи рынков, и Dota 2 в первую сотню не попадает.
+Номер тега взят из `arb_scan_stake/polymarket_dota2.py`. Если Polymarket сменит тег, поиск
+снова перестанет находить матчи — новый номер задаётся переменной окружения, код менять
+не нужно.
 
 ---
 
@@ -269,12 +281,12 @@ CSV, JSON, красивый HTML-отчёт, таблица результато
 | seed/demo data | `app/services/seed.py`, `app/adapters/market_data/mock.py`, `app/cli.py demo` |
 | .env.example без секретов | `.env.example` (+ тест, который это проверяет) |
 | Dockerfile и docker-compose.yml | в корне |
-| команды запуска | README «Быстрый старт», `Makefile` |
+| команды запуска | README «Быстрый старт», `Makefile` (POSIX), `run.ps1` (Windows) |
 | миграции базы | `alembic/`, `alembic.ini`, `alembic/versions/*_initial_schema.py` |
 | README на русском | `README.md` |
 | CHECKLIST.md | этот файл |
 
-**Результат прогона:** `123 passed`.
+**Результат прогона:** `178 passed` (Windows 11, Python 3.12.10, чистый клон).
 
 ---
 
@@ -282,8 +294,8 @@ CSV, JSON, красивый HTML-отчёт, таблица результато
 
 | # | Критерий | Статус | Подтверждение |
 |---|----------|--------|---------------|
-| 1 | Запускается локально одной понятной последовательностью команд | ✅ | README «Быстрый старт»: `pip install -r requirements-dev.txt` → `python -m app.cli demo` → `uvicorn app.main:app` |
-| 2 | Без API-ключей работает полноценный demo/mock-режим | ✅ | `MARKET_DATA_PROVIDER=mock`, адаптеры LLM переходят в mock автоматически; `tests/test_adapters.py::test_codex_and_claude_work_without_api_keys` |
+| 1 | Запускается локально одной понятной последовательностью команд | ✅ | README «Быстрый старт»: `pip install -r requirements-dev.txt` → `python -m app.cli demo` → `uvicorn app.main:app`. На Windows — `.\run.ps1 install` → `.\run.ps1 demo`; проверено на чистом клоне |
+| 2 | Без API-ключей работает полноценный demo/mock-режим | ✅ | `MARKET_DATA_PROVIDER=mock`, адаптеры LLM переходят в mock автоматически; `tests/test_adapters.py::test_codex_and_claude_work_without_api_keys`. `CODEX_TRANSPORT` в `.env.example` = `api`: при `cli` без установленного бинаря Codex отклонялся в каждом раунде |
 | 3 | Можно создать матч и snapshot | ✅ | `/ui/markets` → «Зафиксировать snapshot», `POST /api/rounds` |
 | 4 | Codex и Claude возвращают mock-решения | ✅ | `POST /api/rounds/{id}/request-ai`; демо-вывод в README |
 | 5 | Titan вводит решение через интерфейс | ✅ | `/ui/rounds/{id}/titan` |
@@ -293,7 +305,7 @@ CSV, JSON, красивый HTML-отчёт, таблица результато
 | 9 | Scoreboard и PnL обновляются | ✅ | `/`, `GET /api/stats/scoreboard`; `tests/test_stats.py` |
 | 10 | Результат рынка можно установить вручную | ✅ | кнопки на `/ui/markets`, `POST /api/markets/{id}/settle` |
 | 11 | После settlement обновляются банки и статистика | ✅ | `tests/test_paper_engine.py::test_settlement_pays_winner_and_zeroes_loser`, `tests/test_stats.py::test_scoreboard_after_settlement` |
-| 12 | Все основные тесты проходят | ✅ | `123 passed` |
+| 12 | Все основные тесты проходят | ✅ | `178 passed` |
 
 ---
 
@@ -307,10 +319,19 @@ CSV, JSON, красивый HTML-отчёт, таблица результато
    его конфигурацией нельзя — нужна правка кода и отдельное явное разрешение.
 2. **Приватные ключи Polymarket не поддерживаются.** Для чтения рынков они не нужны,
    а подпись ордеров вне области проекта.
-3. **Папка `arb_scan_stake` с ноутбука пользователя недоступна** в окружении сборки, поэтому
-   готовые функции отслеживания рынков не переиспользованы. Инструкция по подключению своего
-   клиента (реализовать `MarketDataProvider` и зарегистрировать в factory) — в README.
+3. **Из `arb_scan_stake` переиспользован только номер тега Dota 2 в Gamma** (`102366`).
+   Клиент целиком не переносился: там он завязан на сопоставление со Stake и общий
+   движок esports-профилей. Инструкция по подключению своего клиента (реализовать
+   `MarketDataProvider` и зарегистрировать в factory) — в README. Переносить оттуда
+   отправку ордеров и `POLY_PRIVATE_KEY` нельзя — `tests/test_no_live_trading.py` упадёт.
 4. **Результат матча вводится оператором вручную**, автоматического получения от Polymarket нет.
 5. **Аутентификации в панели нет** — рассчитана на локальный запуск. Для публичного хостинга
    нужен обратный прокси с авторизацией, особенно для страницы Титана.
 6. **Ставок внутри карты в реальном времени нет** — прямое требование ТЗ.
+7. **Открытые позиции оцениваются по цене покупки, а не продажи.** `latest_marks()` берёт
+   `yes_price`/`no_price` из последнего snapshot, а это лучший **ask**. Сразу после сделки
+   участник показывает нулевой убыток, хотя мгновенное закрытие по bid дало бы минус на
+   размер спреда (на реальном рынке TI это ≈1.4%). Итоговый банк после settlement верен —
+   искажение только в промежуточных значениях, но именно они идут в ежедневный scoreboard.
+   Консервативный вариант — оценивать по лучшему bid; это решение о правилах эксперимента,
+   поэтому поведение не менялось без вашего согласия. Файл: `app/services/paper_engine.py`.
