@@ -302,6 +302,18 @@ curl -s -u operator:ПАРОЛЬ http://localhost:8000/api/doctor | python -m js
 
 Панель: http://localhost:8000
 
+### На сервере под systemd
+
+Разворачивание одной командой с рабочей машины:
+
+```bash
+pip install -r requirements-deploy.txt
+python deploy/deploy.py
+```
+
+Подробности — [deploy/README_RU.md](deploy/README_RU.md): что куда кладётся,
+как обновлять, как дать доступ Титану и как сбросить эксперимент.
+
 ---
 
 ## 9. Доступ для Титана

@@ -1,0 +1,37 @@
+[Unit]
+Description=PM-INTERNATIONAL — paper-trading эксперимент «Титан vs Codex vs Claude»
+Documentation=file:///opt/pm-international/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/pm-international
+
+# Панель слушает ТОЛЬКО localhost. Без PANEL_PASSWORD она открыта всем, кто
+# дотянется до порта, поэтому наружу её пускать нельзя. Для доступа Титана
+# используйте Cloudflare Tunnel или SSH-проброс — см. RUNBOOK, раздел 9.
+ExecStart=/opt/pm-international/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# HOME нужен явно: участники Codex и Claude запускаются как локальные CLI,
+# а те ищут авторизацию в ~/.claude.json и ~/.codex. Без HOME оба отвалятся
+# с «не авторизован» в каждом раунде.
+Environment=HOME=/root
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHONUNBUFFERED=1
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=pm-international
+
+# Умеренная изоляция. ProtectHome не ставим: CLI-участникам нужен /root.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -296,6 +296,7 @@ CSV, JSON, красивый HTML-отчёт, таблица результато
 | .env.example без секретов | `.env.example` (+ тест, который это проверяет) |
 | Dockerfile и docker-compose.yml | в корне |
 | команды запуска | README «Быстрый старт», `Makefile` (POSIX), `run.ps1` (Windows) |
+| деплой на сервер | `deploy/deploy.py`, `deploy/pm-international.service`, `deploy/README_RU.md` |
 | миграции базы | `alembic/`, `alembic.ini`, `alembic/versions/*_initial_schema.py` |
 | README на русском | `README.md` |
 | CHECKLIST.md | этот файл |
