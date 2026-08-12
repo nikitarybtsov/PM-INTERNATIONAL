@@ -210,14 +210,25 @@ def daily_digest(db: Session) -> bool:
     return _send("\n".join(lines))
 
 
+def _participant_mode(settings, key: str) -> str:
+    """CLI / API / mock — как участник получает решения прямо сейчас."""
+    if key == "codex":
+        transport, has_key = settings.codex_transport, settings.has_openai()
+    else:
+        transport, has_key = settings.claude_transport, settings.has_anthropic()
+    if transport == "cli":
+        return "CLI"
+    return "API" if has_key else "mock"
+
+
 def startup(db: Session) -> bool:
     settings = get_settings()
     text = (
         "🚀 <b>PM-INTERNATIONAL запущен</b>\n"
         f"Режим: <b>PAPER TRADING</b> (реальных сделок нет)\n"
         f"Источник рынков: {_esc(settings.market_data_provider)}\n"
-        f"Codex: {_esc(settings.codex_transport)} · "
-        f"Claude: {'API' if settings.has_anthropic() else 'mock'}\n"
+        f"Codex: {_esc(_participant_mode(settings, 'codex'))} · "
+        f"Claude: {_esc(_participant_mode(settings, 'claude'))}\n"
         f"Планировщик: {'включён' if settings.scheduler_enabled else 'выключен'}\n"
         f"{_esc(settings.public_base_url)}"
     )

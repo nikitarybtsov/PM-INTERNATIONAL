@@ -72,9 +72,10 @@ async def lifespan(app: FastAPI):
         seed_participants(db)
 
     logger.info(
-        "старт: провайдер=%s, codex=%s, live_trading=%s",
+        "старт: провайдер=%s, codex=%s, claude=%s, live_trading=%s",
         settings.market_data_provider,
         settings.codex_transport,
+        settings.claude_transport,
         LIVE_TRADING_ENABLED,
     )
     if not settings.panel_auth_enabled():
@@ -135,9 +136,12 @@ def create_app() -> FastAPI:
             "live_trading_enabled": LIVE_TRADING_ENABLED,
             "market_data_provider": settings.market_data_provider,
             "codex_transport": settings.codex_transport,
+            "claude_transport": settings.claude_transport,
             "participants_in_mock_mode": {
+                # CLI не требует ключа: в mock участник уходит только тогда,
+                # когда работает по API и ключа нет.
                 "codex": settings.codex_transport == "api" and not settings.has_openai(),
-                "claude": not settings.has_anthropic(),
+                "claude": settings.claude_transport == "api" and not settings.has_anthropic(),
             },
             "telegram_configured": settings.has_telegram(),
             "panel_auth_enabled": settings.panel_auth_enabled(),
@@ -152,30 +156,35 @@ def create_app() -> FastAPI:
     @app.get("/api/doctor", tags=["system"])
     def doctor() -> dict:
         """Проверка готовности внешних зависимостей перед запуском."""
+        from app.adapters.participants.claude_cli import ClaudeCliAdapter
         from app.adapters.participants.codex_cli import CodexCliAdapter
 
         settings = get_settings()
         checks: dict[str, object] = {
-            "claude_api_key": settings.has_anthropic(),
             "telegram": settings.has_telegram(),
             "panel_password": settings.panel_auth_enabled(),
             "titan_token": bool(settings.titan_access_token),
             "market_provider": settings.market_data_provider,
         }
-        if settings.codex_transport == "cli":
-            checks["codex_cli"] = CodexCliAdapter.probe()
-        else:
-            checks["codex_api_key"] = settings.has_openai()
-
         problems = []
-        if not checks.get("claude_api_key"):
-            problems.append("нет ANTHROPIC_API_KEY — Claude работает заглушкой")
-        if settings.codex_transport == "cli":
-            probe = checks.get("codex_cli") or {}
-            if not probe.get("available"):
-                problems.append(f"Codex CLI недоступен: {probe.get('error')}")
-        elif not checks.get("codex_api_key"):
-            problems.append("нет OPENAI_API_KEY — Codex работает заглушкой")
+
+        for name, transport, adapter, key_present, key_env in (
+            ("codex", settings.codex_transport, CodexCliAdapter, settings.has_openai(),
+             "OPENAI_API_KEY"),
+            ("claude", settings.claude_transport, ClaudeCliAdapter, settings.has_anthropic(),
+             "ANTHROPIC_API_KEY"),
+        ):
+            if transport == "cli":
+                probe = adapter.probe()
+                checks[f"{name}_cli"] = probe
+                if not probe.get("available"):
+                    problems.append(
+                        f"{adapter.cli_display_name} недоступен: {probe.get('error')}"
+                    )
+            else:
+                checks[f"{name}_api_key"] = key_present
+                if not key_present:
+                    problems.append(f"нет {key_env} — {name} работает заглушкой")
         if not checks["telegram"]:
             problems.append("Telegram не настроен — уведомлений не будет")
         if settings.market_data_provider == "mock":

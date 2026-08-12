@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-opus-5"
     anthropic_base_url: str = "https://api.anthropic.com"
 
+    # Claude через локальный CLI вместо HTTP API (выбор оператора).
+    # Требует установленного и авторизованного `claude` на сервере.
+    claude_transport: Literal["api", "cli"] = "api"
+    claude_cli_command: str = "claude -p"
+    claude_cli_timeout_seconds: float = 180.0
+    claude_cli_model_label: str = "claude-cli"
+
     # Codex через локальный CLI вместо HTTP API (выбор оператора).
     # Требует установленного и авторизованного `codex` на сервере.
     codex_transport: Literal["api", "cli"] = "api"

@@ -261,6 +261,58 @@ def test_settlement_twice_is_blocked(db: Session, market: Market):
         settlement.settle_market(db, market, "NO")
 
 
+# --- mark-to-market ---------------------------------------------------------
+def test_marks_use_best_bid_not_ask(db: Session, market: Market):
+    """Позиция оценивается по цене, по которой её можно закрыть, — по bid.
+
+    yes_price в snapshot — лучший ask. Если брать его, спред выглядит
+    бесплатным и убыток сразу после сделки равен нулю.
+    """
+    _, snap, model, _, _ = prepare(db, market, [(0.60, 1000.0)])
+    db.flush()
+
+    marks = paper_engine.latest_marks(db)
+    # в фикстуре bids YES = 0.49, asks = 0.60, yes_price = 0.50
+    assert marks[(market.id, "YES")] == pytest.approx(0.49)
+    assert marks[(market.id, "NO")] == pytest.approx(0.49)
+
+
+def test_unrealized_pnl_shows_spread_cost_right_after_buy(db: Session, market: Market):
+    """Купили по ask 0.60, лучший bid 0.49 — минус виден сразу, а не после расчёта."""
+    _, snap, model, decision, participant = prepare(db, market, [(0.60, 1000.0)])
+    paper_engine.execute(
+        db, decision=decision, risk=buy_outcome(60.0, 100.0, 0.60),
+        snapshot_row=snap, snapshot_model=model,
+    )
+    db.flush()
+
+    marks = paper_engine.latest_marks(db)
+    pnl = paper_engine.unrealized_pnl(db, participant.id, marks)
+    # 100 контрактов: закрытие по 0.49 даёт 49 против вложенных 60
+    assert pnl == pytest.approx(-11.0)
+
+
+def test_marks_fall_back_to_snapshot_price_without_book(db: Session, market: Market):
+    """Пустой стакан не должен ронять оценку — берём цену из snapshot."""
+    model = make_snapshot_model(market.id, [(0.60, 1000.0)])
+    payload = model.payload()
+    payload["yes_book"] = {"bids": [], "asks": []}
+    payload["no_book"] = {"bids": [], "asks": []}
+    snap = Snapshot(
+        market_id=market.id,
+        phase=Phase.PREMATCH.value,
+        payload=payload,
+        payload_hash=model.content_hash(),
+        captured_at=model.captured_at,
+        ttl_seconds=900,
+    )
+    db.add(snap)
+    db.flush()
+
+    marks = paper_engine.latest_marks(db)
+    assert marks[(market.id, "YES")] == pytest.approx(0.50)
+
+
 def test_fee_is_applied(db: Session, market: Market, monkeypatch):
     from app.config import reset_settings_cache
 

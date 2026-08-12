@@ -1,4 +1,4 @@
-"""Тесты авторизации панели и адаптера Codex через CLI."""
+"""Тесты авторизации панели и адаптеров Codex/Claude через CLI."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.adapters.participants.base import ParticipantError, PortfolioView
+from app.adapters.participants.claude_cli import ClaudeCliAdapter, ClaudeCliError
 from app.adapters.participants.codex_cli import CodexCliAdapter, CodexCliError
 from app.config import get_settings, reset_settings_cache
 from app.constants import Action, Phase
@@ -140,6 +141,126 @@ def test_factory_selects_cli_transport(monkeypatch):
     monkeypatch.setenv("CODEX_TRANSPORT", "cli")
     reset_settings_cache()
     assert isinstance(get_participant_adapter("codex"), CodexCliAdapter)
+    reset_settings_cache()
+
+
+# --- Claude CLI -------------------------------------------------------------
+CLAUDE_VIEW = PortfolioView(
+    participant_key="claude",
+    cash_balance=1000.0,
+    reserved_balance=0.0,
+    initial_balance=1000.0,
+)
+
+
+def test_claude_cli_is_not_mock_without_api_key(monkeypatch):
+    """CLI работает по подписке — отсутствие ANTHROPIC_API_KEY не повод для mock."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("CLAUDE_TRANSPORT", "cli")
+    reset_settings_cache()
+    assert ClaudeCliAdapter().is_mock is False
+    reset_settings_cache()
+
+
+def test_claude_cli_parses_json_amid_noise(monkeypatch):
+    adapter = ClaudeCliAdapter(mock=False)
+    monkeypatch.setattr(subprocess, "run", _fake_run(stdout=VALID_JSON))
+    result = adapter.decide(demo_snapshot(), CLAUDE_VIEW)
+    assert result.decision.action == Action.BUY_YES
+    assert result.model_name == get_settings().claude_cli_model_label
+
+
+def test_claude_cli_missing_binary(monkeypatch):
+    adapter = ClaudeCliAdapter(mock=False)
+    monkeypatch.setattr(subprocess, "run", _fake_run(exc=FileNotFoundError()))
+    with pytest.raises(ParticipantError):
+        adapter.decide(demo_snapshot(), CLAUDE_VIEW)
+
+
+def test_claude_cli_nonzero_exit(monkeypatch):
+    adapter = ClaudeCliAdapter(mock=False)
+    monkeypatch.setattr(subprocess, "run", _fake_run(returncode=1, stderr="not logged in"))
+    with pytest.raises(ParticipantError):
+        adapter.decide(demo_snapshot(), CLAUDE_VIEW)
+
+
+def test_claude_cli_timeout(monkeypatch):
+    adapter = ClaudeCliAdapter(mock=False)
+    monkeypatch.setattr(
+        subprocess, "run", _fake_run(exc=subprocess.TimeoutExpired(cmd="claude", timeout=1))
+    )
+    with pytest.raises(ParticipantError):
+        adapter.decide(demo_snapshot(), CLAUDE_VIEW)
+
+
+def test_claude_cli_empty_command_is_rejected(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CLI_COMMAND", "")
+    reset_settings_cache()
+    adapter = ClaudeCliAdapter(mock=False)
+    with pytest.raises(ClaudeCliError):
+        adapter._build_argv()
+    reset_settings_cache()
+
+
+def test_factory_selects_claude_cli_transport(monkeypatch):
+    from app.adapters.participants.factory import get_participant_adapter
+
+    monkeypatch.setenv("CLAUDE_TRANSPORT", "cli")
+    reset_settings_cache()
+    assert isinstance(get_participant_adapter("claude"), ClaudeCliAdapter)
+    reset_settings_cache()
+
+
+def test_both_cli_participants_get_identical_prompt(monkeypatch):
+    """Условия должны быть одинаковыми: тот же snapshot — тот же текст запроса.
+
+    Отличаться может только строка с собственным банком участника, но здесь
+    банки равны, поэтому промпты обязаны совпасть посимвольно.
+    """
+    captured: dict[str, str] = {}
+
+    def make_runner(name):
+        def runner(argv, **kwargs):
+            captured[name] = kwargs.get("input", "")
+            return subprocess.CompletedProcess(argv, 0, stdout=VALID_JSON, stderr="")
+
+        return runner
+
+    snapshot = demo_snapshot()
+    view = PortfolioView(
+        participant_key="x", cash_balance=1000.0, reserved_balance=0.0, initial_balance=1000.0
+    )
+
+    monkeypatch.setattr(subprocess, "run", make_runner("codex"))
+    CodexCliAdapter(mock=False).decide(snapshot, view)
+    monkeypatch.setattr(subprocess, "run", make_runner("claude"))
+    ClaudeCliAdapter(mock=False).decide(snapshot, view)
+
+    assert captured["codex"] == captured["claude"]
+
+
+def test_doctor_reports_both_cli_transports(client: TestClient, monkeypatch):
+    monkeypatch.setenv("CODEX_TRANSPORT", "cli")
+    monkeypatch.setenv("CLAUDE_TRANSPORT", "cli")
+    monkeypatch.setattr(subprocess, "run", _fake_run(exc=FileNotFoundError()))
+    reset_settings_cache()
+
+    body = client.get("/api/doctor").json()
+    assert body["checks"]["codex_cli"]["available"] is False
+    assert body["checks"]["claude_cli"]["available"] is False
+    assert any("Claude CLI недоступен" in p for p in body["problems"])
+    assert body["ready"] is False
+    reset_settings_cache()
+
+
+def test_health_reports_claude_cli_is_not_mock(client: TestClient, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("CLAUDE_TRANSPORT", "cli")
+    reset_settings_cache()
+
+    body = client.get("/health").json()
+    assert body["claude_transport"] == "cli"
+    assert body["participants_in_mock_mode"]["claude"] is False
     reset_settings_cache()
 
 

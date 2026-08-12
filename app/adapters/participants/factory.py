@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.adapters.participants.base import ParticipantAdapter
 from app.adapters.participants.claude import ClaudeAdapter
+from app.adapters.participants.claude_cli import ClaudeCliAdapter
 from app.adapters.participants.codex import CodexAdapter
 from app.adapters.participants.codex_cli import CodexCliAdapter
 from app.adapters.participants.titan import TitanManualAdapter
@@ -33,6 +34,8 @@ def get_participant_adapter(key: str) -> ParticipantAdapter:
             return CodexCliAdapter()
         return CodexAdapter()
     if key == ParticipantKey.CLAUDE.value:
+        if get_settings().claude_transport == "cli":
+            return ClaudeCliAdapter()
         return ClaudeAdapter()
     if key == ParticipantKey.TITAN.value:
         return TitanManualAdapter()

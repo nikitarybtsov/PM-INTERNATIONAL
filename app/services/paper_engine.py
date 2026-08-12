@@ -368,8 +368,36 @@ def unrealized_pnl(db: Session, participant_id: int, marks: dict[tuple[int, str]
     return money(total)
 
 
+def _best_bid(book: object) -> float | None:
+    """Лучшая цена покупки в стакане исхода, если стакан есть."""
+    if not isinstance(book, dict):
+        return None
+    prices = []
+    for level in book.get("bids") or []:
+        if not isinstance(level, dict):
+            continue
+        try:
+            prices.append(float(level["price"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return max(prices) if prices else None
+
+
 def latest_marks(db: Session) -> dict[tuple[int, str], float]:
-    """Последние известные цены по каждому рынку — из самого свежего snapshot."""
+    """Mark-to-market цены по каждому рынку — из самого свежего snapshot.
+
+    Открытая позиция оценивается по лучшему **bid**: это цена, по которой её
+    можно закрыть прямо сейчас. `yes_price`/`no_price` в snapshot — лучший ask,
+    то есть цена покупки; оценивать по ней значит считать спред бесплатным и
+    показывать нулевой убыток сразу после сделки.
+
+    Разница видна в ежедневном scoreboard: на рынках TI спред около 1.4%.
+    Итоговый банк после settlement от выбора не зависит — позиции гасятся по
+    факту исхода.
+
+    Если стакана нет (пустая книга, урезанный snapshot), берётся цена из
+    snapshot, а если нет и её — 0.5.
+    """
     marks: dict[tuple[int, str], float] = {}
     market_ids = [m.id for m in db.scalars(select(Market))]
     for market_id in market_ids:
@@ -382,6 +410,12 @@ def latest_marks(db: Session) -> dict[tuple[int, str], float]:
         if snap is None:
             continue
         payload = snap.payload or {}
-        marks[(market_id, "YES")] = float(payload.get("yes_price", 0.5))
-        marks[(market_id, "NO")] = float(payload.get("no_price", 0.5))
+        for outcome, book_key, price_key in (
+            ("YES", "yes_book", "yes_price"),
+            ("NO", "no_book", "no_price"),
+        ):
+            bid = _best_bid(payload.get(book_key))
+            if bid is None:
+                bid = float(payload.get(price_key, 0.5))
+            marks[(market_id, outcome)] = bid
     return marks

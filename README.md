@@ -1,8 +1,11 @@
 # Титан в Dota 2 против Codex и Claude
 
-Публичный YouTube-эксперимент: **человек с рангом «Титан»** соревнуется с **Codex** (OpenAI API)
-и **Claude** (Anthropic API) на рынках The International в Polymarket.
+Публичный YouTube-эксперимент: **человек с рангом «Титан»** соревнуется с **Codex** и
+**Claude** на рынках The International в Polymarket.
 Каждому участнику выдаётся отдельный виртуальный капитал **$1000 USDC**.
+
+ИИ-участники работают через локальные CLI по подпискам либо через API-ключи — на выбор
+оператора. Титан вводит решения руками через форму в панели.
 
 > ## ⚠️ Только paper trading
 > Проект **не совершает реальных сделок**. В кодовой базе нет ни подписи транзакций,
@@ -187,7 +190,8 @@ app/
 │   └── snapshot.py            immutable MarketSnapshot + content_hash
 ├── adapters/
 │   ├── market_data/           base · mock · polymarket · factory
-│   └── participants/          base · prompting · llm_base · codex · claude
+│   └── participants/          base · prompting · llm_base · cli_base
+│                              · codex · codex_cli · claude · claude_cli
 │                              · titan · mock_brain · factory
 ├── services/
 │   ├── snapshots.py           фиксация снимков, устаревание
@@ -204,7 +208,7 @@ app/
 ├── api/routes/                markets · rounds · portfolios · stats · export · ui
 └── web/                       Jinja2-шаблоны и статика
 alembic/                       миграции
-tests/                         123 теста
+tests/                         191 тест
 ```
 
 ---
@@ -287,6 +291,10 @@ UNIQUE-ограничение `simulated_orders.decision_id`.
 - Позиции ведутся по исходам YES/NO со средней ценой и `cost_basis`.
 - `SELL` закрывает позицию (полностью или частично) и фиксирует realized PnL.
 - Settlement после ручного ввода результата: победивший исход гасится по 1.00, проигравший по 0.00.
+- **Открытая позиция оценивается по лучшему bid** — по цене, за которую её можно закрыть
+  прямо сейчас. Оценка по ask показывала бы нулевой убыток сразу после сделки, то есть
+  считала спред бесплатным (на рынках TI это ≈1.4%). На итоговый банк выбор не влияет:
+  после settlement позиции гасятся по факту исхода — только на промежуточный scoreboard.
 - **Воспроизводимость**: результат зависит только от snapshot и заявки; seed исполнения
   детерминированно выводится из `(round_id, participant_id, market_id, payload_hash)`.
   Случайных чисел в исполнении нет вообще.
@@ -377,23 +385,45 @@ Dota 2 вовсе. Если Polymarket когда-нибудь сменит те
 > и хранит `POLY_PRIVATE_KEY`, и ни то, ни другое в этом проекте недопустимо.
 > Тест `tests/test_no_live_trading.py` упадёт, если такой код появится.
 
-### Codex (OpenAI)
+У каждого из двух ИИ-участников есть два транспорта: локальный CLI (расход по
+подписке) и HTTP API (расход по токенам). Выбор транспорта на условия
+эксперимента не влияет — промпт, схема ответа, число ретраев и таймаут общие,
+это зафиксировано тестом `test_both_cli_participants_get_identical_prompt`.
+
+**Вариант 1 — по подпискам, без единого API-ключа.** Так планируется запуск на
+сервере: оба CLI устанавливаются и авторизуются один раз руками, интерактивно.
 
 ```bash
+CODEX_TRANSPORT=cli
+CODEX_CLI_COMMAND=codex exec --skip-git-repo-check
+
+CLAUDE_TRANSPORT=cli
+CLAUDE_CLI_COMMAND=claude -p
+```
+
+Готовность проверяется через `GET /api/doctor` — у обоих должно быть
+`available: true`. CLI не гарантирует чистый JSON, поэтому адаптер извлекает
+объект из текста и служебные строки вокруг ответа не мешают.
+
+**Вариант 2 — по API-ключам.**
+
+```bash
+CODEX_TRANSPORT=api
 OPENAI_API_KEY=sk-...        # только в .env, не в коде и не в Git
 OPENAI_MODEL=gpt-5.1
-```
 
-### Claude (Anthropic)
-
-```bash
+CLAUDE_TRANSPORT=api
 ANTHROPIC_API_KEY=sk-ant-... # только в .env
-ANTHROPIC_MODEL=claude-opus-4-5
+ANTHROPIC_MODEL=claude-opus-5
 ```
 
-Без ключа адаптер автоматически переходит в mock-режим (`is_mock == True`) и проект
-продолжает работать полностью. Транспорт — `httpx`, поэтому SDK ставить не обязательно;
-если хотите официальные SDK, есть `requirements-live-models.txt`.
+Без ключа адаптер в режиме `api` автоматически переходит в mock (`is_mock == True`)
+и проект продолжает работать полностью. В режиме `cli` ключ не нужен и mock не
+включается: если бинарь не установлен, участник получит `FAILED` в каждом раунде —
+поэтому по умолчанию в `.env.example` стоит `api`, чтобы demo работал на голой машине.
+
+Транспорт API — `httpx`, SDK ставить не обязательно; если хотите официальные SDK,
+есть `requirements-live-models.txt`.
 
 Оба адаптера: структурированный JSON, валидация схемы, повторный запрос при невалидном
 формате (`PARTICIPANT_MAX_RETRIES`, по умолчанию 2), таймаут
