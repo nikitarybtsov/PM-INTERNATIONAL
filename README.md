@@ -56,6 +56,32 @@ make demo
 make run
 ```
 
+### Windows
+
+`make` и Makefile здесь не работают: он написан под POSIX (`.venv/bin`, `rm`,
+`find`). Вместо него — `run.ps1` с теми же командами:
+
+```powershell
+git clone <repo>; cd PM-INTERNATIONAL
+
+.\run.ps1 install             # venv + зависимости, сам найдёт Python 3.12
+Copy-Item .env.example .env
+
+.\run.ps1 demo                # полный демо-раунд без ключей
+.\run.ps1 run                 # панель на http://localhost:8000
+```
+
+`.\run.ps1` без аргументов покажет все команды (`test`, `seed`, `export`,
+`status`, `doctor`, `clean`, `migrate`).
+
+Если PowerShell откажется запускать скрипт, разрешите локальные скрипты:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+Docker на Windows не обязателен — проект работает на SQLite без него.
+
 Что вы увидите после `make demo`:
 
 ```
@@ -310,25 +336,46 @@ PnL по командам · PnL по типам рынков.
 MARKET_DATA_PROVIDER=polymarket
 POLYMARKET_GAMMA_URL=https://gamma-api.polymarket.com
 POLYMARKET_CLOB_URL=https://clob.polymarket.com
-POLYMARKET_SEARCH_QUERY=Dota
+POLYMARKET_SEARCH_QUERY=The International   # пусто или Dota — все матчи Dota 2
+POLYMARKET_GAMMA_TAG_ID=102366              # тег Dota 2 в Gamma
+POLYMARKET_MAIN_MARKET_ONLY=true            # только победитель серии
+POLYMARKET_ONLY_UPCOMING=true               # скрывать начавшиеся матчи
 ```
 
-Адаптер `app/adapters/market_data/polymarket.py` читает `GET /markets` (Gamma) и
-`GET /book?token_id=…` (CLOB), нормализует события, сохраняет сырые ответы в
-`raw_market_payloads`. Если рынок исчез, закрылся или сменил структуру — поднимается
-`MarketNotAvailable`, раунд не создаётся, событие пишется в аудит.
+Адаптер `app/adapters/market_data/polymarket.py` читает `GET /events?tag_id=…`
+(Gamma) и `GET /book?token_id=…` (CLOB), нормализует события, сохраняет сырые
+ответы в `raw_market_payloads`. Если рынок исчез, закрылся или сменил структуру —
+поднимается `MarketNotAvailable`, раунд не создаётся, событие пишется в аудит.
+
+Поиск идёт **по тегу**, а не перебором активных рынков: на Polymarket
+одновременно живут тысячи рынков, и выборка «первые N активных» не содержит
+Dota 2 вовсе. Если Polymarket когда-нибудь сменит тег, поиск перестанет
+находить матчи — новый номер указывается в `POLYMARKET_GAMMA_TAG_ID`, код
+менять не нужно.
+
+У одного матча Polymarket публикует 20-30 рынков: победитель серии, победитель
+каждой карты, форы, тоталы, экзотика. По умолчанию берётся только основной
+рынок серии; `POLYMARKET_MAIN_MARKET_ONLY=false` открывает остальные, и они
+попадают в статистику по типам рынков как `MAP_WINNER`, `HANDICAP`, `TOTALS`,
+`SPECIAL`.
 
 **Приватные ключи Polymarket не поддерживаются намеренно.** Для чтения рынков они не нужны,
 а подпись ордеров вне области этого проекта. Если позже понадобится live-режим —
 это отдельная задача с отдельным явным разрешением: нужно будет реализовать
 `ExecutionEngine` рядом с `PaperExecutionEngine` и снять хардкод `LIVE_TRADING_ENABLED`.
 
-> О папке `arb_scan_stake` на вашем ноутбуке: в этом окружении её нет, поэтому готовые
-> функции отслеживания рынков не переиспользованы. Если в ней есть рабочий клиент
-> Polymarket, его достаточно обернуть в класс, реализующий интерфейс
-> `MarketDataProvider` (три метода: `search_markets`, `get_market`, `get_quote`), и
-> зарегистрировать в `app/adapters/market_data/factory.py`. Остальной код менять не нужно.
-> Переносите **только чтение данных** — функции отправки ордеров в этот проект переносить нельзя.
+> О папке `arb_scan_stake`: из неё переиспользован номер тега Dota 2 в Gamma
+> (`102366`, см. `polymarket_dota2.py`) — именно его не хватало, чтобы поиск
+> находил матчи. Сам клиент не переносился: там он завязан на сопоставление со
+> Stake и на общий движок esports-профилей.
+>
+> Если захотите подключить свой клиент целиком, оберните его в класс,
+> реализующий интерфейс `MarketDataProvider` (три метода: `search_markets`,
+> `get_market`, `get_quote`), и зарегистрируйте в
+> `app/adapters/market_data/factory.py` — остальной код менять не нужно.
+> Переносите **только чтение данных**: `arb_scan_stake` умеет отправлять ордера
+> и хранит `POLY_PRIVATE_KEY`, и ни то, ни другое в этом проекте недопустимо.
+> Тест `tests/test_no_live_trading.py` упадёт, если такой код появится.
 
 ### Codex (OpenAI)
 

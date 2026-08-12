@@ -26,7 +26,7 @@ Claude через API, уведомления в Telegram, автоматиче�
 git clone <repo> && cd PM-INTERNATIONAL
 
 python3.12 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements-dev.txt
 
 cp .env.example .env
@@ -35,9 +35,26 @@ cp .env.example .env
 Проверка, что всё встало:
 
 ```bash
-pytest -q          # ожидается 169 passed
+pytest -q                # ожидается 178 passed
 python -m app.cli demo   # демо-раунд без единого ключа
 ```
+
+**На Windows** используйте `run.ps1` — Makefile написан под POSIX и не работает:
+
+```powershell
+.\run.ps1 install
+Copy-Item .env.example .env
+.\run.ps1 test
+.\run.ps1 demo
+```
+
+Две особенности Windows, о которые легко споткнуться:
+
+* если PowerShell не запускает скрипт —
+  `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`;
+* `CODEX_TRANSPORT=cli` в `.env.example` стоит по умолчанию, но `codex` —
+  это отдельная программа. Пока вы её не поставили (раздел 2), укажите
+  `CODEX_TRANSPORT=api`, иначе Codex будет отклонён в каждом раунде.
 
 ---
 
@@ -141,17 +158,46 @@ TITAN_ACCESS_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(24))
 
 ```bash
 MARKET_DATA_PROVIDER=polymarket
+POLYMARKET_SEARCH_QUERY=The International   # пусто или Dota — все матчи Dota 2
 ```
 
-Проверьте с этой же машины, что Polymarket доступен:
+Ключи не нужны: используются только публичные read-only эндпоинты.
+
+Проверьте с этой же машины, что Polymarket доступен. Проверять нужно именно
+поиск по тегу Dota 2 — общий `/markets` отвечает всегда, даже когда рынков
+Dota в выдаче нет:
 
 ```bash
-curl -s "https://gamma-api.polymarket.com/markets?active=true&limit=1" | head -c 200
+curl -s "https://gamma-api.polymarket.com/events?tag_id=102366&closed=false&limit=3" \
+  | head -c 300
 ```
 
-Если пусто или ошибка — скорее всего провайдер/страна блокирует домен,
-понадобится VPN на машине. С `MARKET_DATA_PROVIDER=mock` всё продолжит
-работать на демо-данных.
+Если ответ пустой или ошибка — скорее всего провайдер или страна блокирует
+домен, понадобится VPN. С `MARKET_DATA_PROVIDER=mock` всё продолжит работать
+на демо-данных.
+
+Дальше загрузите рынки в базу:
+
+```bash
+python -m app.cli seed      # Windows: .\run.ps1 seed
+```
+
+Ожидаемый результат — список предстоящих матчей. Если он пуст:
+
+* **матчей действительно нет** — между турнирами Polymarket не публикует
+  рынки Dota 2; проверьте выдачу `curl` выше;
+* **все матчи уже начались** — по умолчанию показываются только предстоящие,
+  снимите фильтр через `POLYMARKET_ONLY_UPCOMING=false`;
+* **слишком узкий фильтр** — `POLYMARKET_SEARCH_QUERY` сверяется с названием
+  матча и турнира, попробуйте пустое значение;
+* **Polymarket сменил тег Dota 2** — тогда не поможет ничего из перечисленного.
+  Найдите новый тег и укажите его в `POLYMARKET_GAMMA_TAG_ID`, код менять
+  не нужно.
+
+По умолчанию берётся только основной рынок серии — победитель матча. У одного
+матча Polymarket публикует ещё 20-30 рынков (победитель каждой карты, форы,
+тоталы, экзотика вроде «закончится ли карта днём»). Открыть их:
+`POLYMARKET_MAIN_MARKET_ONLY=false`.
 
 ---
 
