@@ -321,6 +321,31 @@ class PolymarketDataProvider(MarketDataProvider):
         asks.sort(key=lambda x: x[0])
         return bids[:10], asks[:10]
 
+    def _fetch_price_history(self, token_id: str) -> list[float]:
+        """История цены исхода YES — поле `recent_prices` снимка.
+
+        Без неё участники не видят, двигался ли рынок, и не могут отличить
+        стабильную цену от свежего сдвига на новостях.
+        """
+        settings = get_settings()
+        payload = self._get(
+            f"{self.clob_url}/prices-history",
+            params={
+                "market": token_id,
+                "interval": settings.polymarket_history_interval,
+                "fidelity": settings.polymarket_history_fidelity,
+            },
+        )
+        points = payload.get("history") if isinstance(payload, dict) else None
+        if not isinstance(points, list):
+            return []
+        prices = [
+            round(_to_float(p.get("p")), 4)
+            for p in points
+            if isinstance(p, dict) and p.get("p") is not None
+        ]
+        return prices[-settings.polymarket_history_points :]
+
     def get_quote(self, market: MarketRef) -> MarketQuote:
         raw = market.raw or {}
         token_ids = _as_list(raw.get("clobTokenIds"))
@@ -333,6 +358,7 @@ class PolymarketDataProvider(MarketDataProvider):
         yes_asks: list[tuple[float, float]] = []
         no_bids: list[tuple[float, float]] = []
         no_asks: list[tuple[float, float]] = []
+        recent_prices: list[float] = []
         if len(token_ids) >= 2:
             try:
                 yes_bids, yes_asks = self._fetch_book(str(token_ids[0]))
@@ -344,6 +370,16 @@ class PolymarketDataProvider(MarketDataProvider):
                 )
             except MarketNotAvailable:
                 logger.warning("стакан недоступен для %s, используем только цены", market.external_id)
+        if token_ids:
+            # История — не критичный для сделки блок: её отсутствие не должно
+            # мешать зафиксировать snapshot.
+            try:
+                recent_prices = self._fetch_price_history(str(token_ids[0]))
+                self._store_raw(
+                    market.external_id, "/prices-history", {"points": len(recent_prices)}
+                )
+            except MarketNotAvailable:
+                logger.warning("история цен недоступна для %s", market.external_id)
 
         if yes_asks:
             yes_price = yes_asks[0][0]
@@ -367,7 +403,7 @@ class PolymarketDataProvider(MarketDataProvider):
             volume_24h_usdc=_to_float(raw.get("volume24hr") or raw.get("volumeNum")) or None,
             price_change_1h=_to_float(raw.get("oneHourPriceChange")) or None,
             price_change_24h=_to_float(raw.get("oneDayPriceChange")) or None,
-            recent_prices=[],
+            recent_prices=recent_prices,
             fetched_at=datetime.now(UTC),
             raw={"outcomePrices": prices, "clobTokenIds": token_ids},
         )

@@ -118,6 +118,73 @@ def test_polymarket_adapter_normalizes_payload():
     assert quote.liquidity_usdc == pytest.approx(24000)
 
 
+def test_polymarket_quote_includes_price_history():
+    """recent_prices требуется ТЗ и доходит до промпта — живой адаптер обязан его заполнять."""
+    raw_market = {
+        "id": "1",
+        "question": "A vs B",
+        "outcomes": json.dumps(["A", "B"]),
+        "outcomePrices": json.dumps(["0.69", "0.31"]),
+        "clobTokenIds": json.dumps(["tok-yes", "tok-no"]),
+        "liquidityNum": 16000,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/book":
+            return httpx.Response(200, json={
+                "bids": [{"price": "0.68", "size": "500"}],
+                "asks": [{"price": "0.69", "size": "500"}],
+            })
+        if request.url.path == "/prices-history":
+            assert request.url.params.get("market") == "tok-yes"
+            return httpx.Response(200, json={
+                "history": [{"t": 1786467613 + i * 3600, "p": 0.70 + i * 0.001}
+                            for i in range(30)]
+            })
+        return httpx.Response(404, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://test")
+    provider = PolymarketDataProvider(
+        gamma_url="http://test", clob_url="http://test", client=client
+    )
+    quote = provider.get_quote(provider._normalize(raw_market))
+
+    # хвост истории, обрезанный до POLYMARKET_HISTORY_POINTS
+    assert len(quote.recent_prices) == 12
+    assert quote.recent_prices[-1] == pytest.approx(0.729)
+
+
+def test_polymarket_quote_survives_missing_price_history():
+    """Недоступная история не должна мешать зафиксировать snapshot."""
+    raw_market = {
+        "id": "1",
+        "question": "A vs B",
+        "outcomes": json.dumps(["A", "B"]),
+        "outcomePrices": json.dumps(["0.69", "0.31"]),
+        "clobTokenIds": json.dumps(["tok-yes", "tok-no"]),
+        "liquidityNum": 16000,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/book":
+            return httpx.Response(200, json={
+                "bids": [{"price": "0.68", "size": "500"}],
+                "asks": [{"price": "0.69", "size": "500"}],
+            })
+        if request.url.path == "/prices-history":
+            return httpx.Response(503, json={"error": "unavailable"})
+        return httpx.Response(404, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://test")
+    provider = PolymarketDataProvider(
+        gamma_url="http://test", clob_url="http://test", client=client
+    )
+    quote = provider.get_quote(provider._normalize(raw_market))
+
+    assert quote.recent_prices == []
+    assert quote.yes_asks  # стакан при этом на месте
+
+
 def test_polymarket_adapter_raises_on_network_error():
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("нет сети")

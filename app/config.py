@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # основной рынок серии — эксперимент про победителя матча.
     polymarket_main_market_only: bool = True
     polymarket_only_upcoming: bool = True
+    # История цены YES для поля recent_prices снимка. Без неё участники не
+    # видят, двигался ли рынок перед матчем.
+    polymarket_history_interval: str = "1d"
+    polymarket_history_fidelity: int = 60
+    polymarket_history_points: int = 12
 
     # участники (ключи только из окружения)
     openai_api_key: str | None = Field(default=None, repr=False)
