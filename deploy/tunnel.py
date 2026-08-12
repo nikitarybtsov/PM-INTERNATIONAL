@@ -15,11 +15,13 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import select
 import socketserver
 import sys
 import threading
+import time
 from pathlib import Path
 
 try:
@@ -95,26 +97,20 @@ def main() -> int:
     if not host or not password:
         sys.exit("Нужны DEPLOY_HOST и SERVER_PASSWORD в .env")
 
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        host, port=int(os.getenv("DEPLOY_PORT") or "22"), username=user,
-        password=password, timeout=25, allow_agent=False, look_for_keys=False,
-    )
-    print(f"Подключено: {user}@{host}")
-
-    handler = type(
-        "Handler",
-        (_Handler,),
-        {
-            "ssh_transport": client.get_transport(),
-            "chain_host": REMOTE_HOST,
-            "chain_port": REMOTE_PORT,
-        },
-    )
-    server = _Server(("127.0.0.1", args.port), handler)
-
+    port = int(os.getenv("DEPLOY_PORT") or "22")
     url = f"http://localhost:{args.port}/"
+
+    def connect() -> paramiko.SSHClient:
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.connect(
+            host, port=port, username=user, password=password,
+            timeout=25, allow_agent=False, look_for_keys=False,
+        )
+        return client
+
+    client = connect()
+    print(f"Подключено: {user}@{host}")
     print(f"Панель: {url}")
     print("Окно не закрывайте — туннель живёт, пока идёт эта команда (Ctrl+C — выход).")
     if args.open:
@@ -122,13 +118,57 @@ def main() -> int:
 
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
+    server: _Server | None = None
     try:
-        server.serve_forever()
+        while True:
+            handler = type(
+                "Handler",
+                (_Handler,),
+                {
+                    "ssh_transport": client.get_transport(),
+                    "chain_host": REMOTE_HOST,
+                    "chain_port": REMOTE_PORT,
+                },
+            )
+            server = _Server(("127.0.0.1", args.port), handler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+
+            # Деплой перезапускает сервис и рвёт соединение. Без переподключения
+            # туннель молча умирал бы, и панель переставала открываться.
+            while True:
+                time.sleep(5)
+                transport = client.get_transport()
+                if transport is None or not transport.is_active():
+                    print("Соединение потеряно, переподключаюсь…")
+                    break
+
+            server.shutdown()
+            server.server_close()
+            server = None
+            with contextlib.suppress(Exception):
+                client.close()
+
+            for attempt in range(1, 61):
+                try:
+                    client = connect()
+                    print("Соединение восстановлено.")
+                    break
+                except Exception as exc:  # noqa: BLE001 — ждём, пока сервер вернётся
+                    if attempt == 1:
+                        print(f"  сервер недоступен ({type(exc).__name__}), жду…")
+                    time.sleep(5)
+            else:
+                print("Не удалось переподключиться за 5 минут. Выхожу.")
+                return 1
     except KeyboardInterrupt:
         print("\nТуннель закрыт.")
     finally:
-        server.shutdown()
-        client.close()
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        with contextlib.suppress(Exception):
+            client.close()
     return 0
 
 
