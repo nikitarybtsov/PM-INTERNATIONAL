@@ -16,7 +16,8 @@
 param(
     [Parameter(Position = 0)]
     [ValidateSet('help', 'install', 'init', 'seed', 'demo', 'run', 'test',
-                 'lint', 'migrate', 'export', 'status', 'doctor', 'clean')]
+                 'lint', 'migrate', 'export', 'status', 'doctor', 'clean',
+                 'panel', 'deploy', 'server-status', 'server-doctor', 'server-logs')]
     [string]$Command = 'help',
 
     # Порт веб-панели (только для команды run)
@@ -84,6 +85,14 @@ switch ($Command) {
   .\run.ps1 doctor     проверить конфигурацию
   .\run.ps1 clean      удалить БД, экспорты и кэши
 
+Работа с сервером (эксперимент живёт там, локальный запуск — отдельная база):
+
+  .\run.ps1 panel          открыть панель сервера: туннель + браузер
+  .\run.ps1 deploy         выкатить текущий код на сервер
+  .\run.ps1 server-status  состояние сервиса и /health
+  .\run.ps1 server-doctor  готовность Codex, Claude и источника рынков
+  .\run.ps1 server-logs    журнал сервиса
+
 Первый запуск с нуля:
   .\run.ps1 install
   Copy-Item .env.example .env
@@ -148,6 +157,37 @@ print(json.dumps({
 "@
         } finally { Pop-Location }
         Write-Host "`nПодробнее — GET /api/doctor при запущенной панели."
+    }
+
+    { $_ -in 'deploy', 'server-status', 'server-doctor', 'server-logs' } {
+        $flag = switch ($Command) {
+            'deploy'         { $null }
+            'server-status'  { '--status' }
+            'server-doctor'  { '--doctor' }
+            'server-logs'    { '--logs' }
+        }
+        # $args — автоматическая переменная PowerShell, своё имя обязательно
+        $deployArgs = @((Join-Path $Root 'deploy\deploy.py'))
+        if ($flag) { $deployArgs += $flag }
+        Invoke-Venv $deployArgs
+    }
+
+    'panel' {
+        # Панель на сервере слушает только localhost, поэтому пробрасываем порт.
+        $envFile = Join-Path $Root '.env'
+        if (-not (Test-Path $envFile)) { throw "Нет .env — скопируйте .env.example" }
+        $hostLine = Select-String -Path $envFile -Pattern '^DEPLOY_HOST=(.+)$' |
+                    Select-Object -First 1
+        $userLine = Select-String -Path $envFile -Pattern '^DEPLOY_USER=(.+)$' |
+                    Select-Object -First 1
+        if (-not $hostLine) { throw "В .env нет DEPLOY_HOST" }
+        $remoteHost = $hostLine.Matches[0].Groups[1].Value.Trim()
+        $remoteUser = if ($userLine) { $userLine.Matches[0].Groups[1].Value.Trim() } else { 'root' }
+
+        Write-Host "Туннель $remoteUser@$remoteHost : панель будет на http://localhost:$Port/"
+        Write-Host "Окно не закрывайте — туннель живёт, пока идёт эта команда (Ctrl+C — закрыть)."
+        Start-Process "http://localhost:$Port/"
+        & ssh -N -L "${Port}:127.0.0.1:8000" "$remoteUser@$remoteHost"
     }
 
     'clean' {
