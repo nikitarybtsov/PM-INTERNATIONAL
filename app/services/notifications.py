@@ -77,8 +77,13 @@ def round_opened(db: Session, round_row: Round) -> bool:
         f"{no_label} <b>{payload.get('no_price')}</b>\n"
         f"Ликвидность: {payload.get('liquidity_usdc')} USDC\n"
         f"Snapshot #{round_row.snapshot_id} · hash <code>{_esc((snap.payload_hash if snap else '')[:12])}</code>\n\n"
-        f"⏳ Ждём решение Титана: {_titan_link(round_row.id)}"
     )
+    # Титан торгует со своего кошелька и в раундах не участвует — ждать его
+    # незачем, иначе оператор получал бы ссылку на форму, которая ему не нужна.
+    if get_settings().titan_participates_in_rounds:
+        text += f"⏳ Ждём решение Титана: {_titan_link(round_row.id)}"
+    else:
+        text += "⏳ Claude и Codex анализируют матч — пришлю заявки, когда будут готовы."
     return _send(text)
 
 

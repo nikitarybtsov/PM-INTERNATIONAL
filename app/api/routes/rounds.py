@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -55,7 +55,11 @@ def list_rounds(db: Session = Depends(get_db)) -> list[dict]:
 
 
 @router.post("", status_code=201)
-def create_round(payload: CreateRoundRequest, db: Session = Depends(get_db)) -> dict:
+def create_round(
+    payload: CreateRoundRequest,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+) -> dict:
     market = db.get(Market, payload.market_id)
     if market is None:
         raise HTTPException(status_code=404, detail="рынок не найден")
@@ -76,56 +80,57 @@ def create_round(payload: CreateRoundRequest, db: Session = Depends(get_db)) -> 
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     notifications.round_opened(db, row)
-    return _autopilot(db, row)
+    state = rounds_service.public_round_state(db, row)
+
+    settings = get_settings()
+    if settings.auto_request_ai_on_snapshot:
+        # Модели думают минутами: держать на этом HTTP-запрос нельзя — браузер
+        # отваливается по таймауту и оператор видит Internal Server Error.
+        # Поэтому снимок фиксируется сразу, а анализ идёт фоном; о готовности
+        # оператор узнаёт из Telegram.
+        background.add_task(_autopilot, row.id)
+        state["autopilot"] = "запущен: модели думают, уведомление придёт в Telegram"
+
+    return state
 
 
-def _autopilot(db: Session, row) -> dict:
+def _autopilot(round_id: int) -> None:
     """Довести раунд от снимка до экрана одобрения без участия оператора.
 
-    Смысл в том, чтобы после нажатия «Зафиксировать snapshot» человеку не
-    приходилось дёргать ещё две кнопки: ИИ запрашиваются сами, risk engine
-    считает, а оператор получает в Telegram ссылку и одобряет.
-
-    Сбой на любом шаге не роняет раунд: он просто останавливается там, где
-    остановился, и его можно продолжить руками.
+    Работает в фоне и со своей сессией БД: HTTP-запрос к этому моменту уже
+    завершён. Сбой на любом шаге не роняет раунд — он останавливается там, где
+    остановился, и доводится руками.
     """
-    settings = get_settings()
-    state = rounds_service.public_round_state(db, row)
-    if not settings.auto_request_ai_on_snapshot:
-        return state
+    from app.db.base import session_scope
 
     try:
-        stored = rounds_service.request_ai_decisions(db, row)
-        # ORM-объекты наружу не отдаём — только факт и статус
-        collected = {
-            db.get(Participant, d.participant_id).key: d.status for d in stored
-        }
-    except Exception as exc:  # noqa: BLE001 — раунд остаётся открытым
-        logger.exception("автозапрос ИИ не удался")
-        return {**state, "autopilot_error": str(exc)[:300]}
+        with session_scope() as db:
+            row = db.get(Round, round_id)
+            if row is None:
+                return
 
-    state = rounds_service.public_round_state(db, row)
-    if state["status"] != RoundStatus.LOCKED.value:
-        # ждём Титана, если он участвует в раундах
-        return {**state, "ai": collected}
+            stored = rounds_service.request_ai_decisions(db, row)
+            statuses = {
+                db.get(Participant, d.participant_id).key: d.status for d in stored
+            }
+            if statuses:
+                notifications.ai_collected(db, row, statuses)
 
-    try:
-        proposals = rounds_service.prepare_round(db, row)
-    except rounds_service.RoundStateError as exc:
-        return {**state, "ai": collected, "autopilot_error": str(exc)[:300]}
+            if rounds_service.public_round_state(db, row)["status"] != (
+                RoundStatus.LOCKED.value
+            ):
+                return  # ждём Титана, если он участвует в раундах
 
-    notifications.approval_needed(db, row, proposals)
-    if row.phase == Phase.AFTER_DRAFT.value:
-        executable = [p for p in proposals.values() if p.get("executable")]
-        best = max(executable, key=lambda p: p.get("net_edge") or 0, default=None)
-        notifications.draft_ready(db, row, best)
-
-    return {
-        **rounds_service.public_round_state(db, row),
-        "ai": collected,
-        "proposals": proposals,
-        "approval_required": settings.live_execution_ready(),
-    }
+            proposals = rounds_service.prepare_round(db, row)
+            notifications.approval_needed(db, row, proposals)
+            if row.phase == Phase.AFTER_DRAFT.value:
+                executable = [p for p in proposals.values() if p.get("executable")]
+                best = max(
+                    executable, key=lambda p: p.get("net_edge") or 0, default=None
+                )
+                notifications.draft_ready(db, row, best)
+    except Exception:  # noqa: BLE001 — фоновая задача не имеет права падать молча
+        logger.exception("автопилот раунда #%s прервался", round_id)
 
 
 @router.post("/between-maps", status_code=201)

@@ -110,8 +110,8 @@ class Settings(BaseSettings):
     # рынков у матча 20-30 — брать все значит держать снимок десятки секунд.
     # Поэтому стаканы тянутся только для типов, на которых имеет смысл торговать,
     # и не больше лимита. Остальные рынки участник видит, но ставить не может.
-    polymarket_sibling_book_types: str = "MATCH_WINNER,MAP_WINNER,TOTALS,HANDICAP"
-    polymarket_sibling_book_limit: int = 8
+    polymarket_sibling_book_types: str = "MATCH_WINNER,MAP_WINNER,TOTALS,HANDICAP,SPECIAL"
+    polymarket_sibling_book_limit: int = 30
 
     # --- Комиссия Polymarket (sports_fees_v2) ------------------------------
     # fee = C × rate × p × (1 − p); платит только тейкер, берётся при сделке.

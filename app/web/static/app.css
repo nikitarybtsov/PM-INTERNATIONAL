@@ -195,3 +195,33 @@ pre {
   border: 1px solid #b91c1c;
   font-weight: 700;
 }
+
+/* --- читаемость заголовков колонок ------------------------------------- */
+/* Раньше имя участника было тем же цветом, что фон карточки: на тёмной теме
+   оно фактически исчезало, а при выделении мышью читалось ещё хуже. */
+.analysis-head {
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid #2a3346;
+}
+.analysis-head .who {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: .01em;
+  color: #f2f5fa;
+}
+.analysis-head .model {
+  font-size: 11px;
+  color: #7f8ba3;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.analysis-col.codex  .analysis-head .who { color: #7fb0ff; }
+.analysis-col.claude .analysis-head .who { color: #e8956f; }
+.analysis-col.titan  .analysis-head .who { color: #6fd9b8; }
+
+/* Выделение текста мышью должно оставаться читаемым в любом блоке */
+::selection {
+  background: #3b82f6;
+  color: #ffffff;
+}
+.risk-box b, .risk-box { color: #cfd6e4; }

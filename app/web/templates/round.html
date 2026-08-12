@@ -107,8 +107,8 @@
     {% set dec = d.decision %}
     <div class="analysis-col {{ d.participant }}">
       <div class="analysis-head">
-        <b>{{ d.display_name or d.participant }}</b>
-        <span class="muted">{{ d.model_name or '' }}</span>
+        <span class="who">{{ d.display_name or d.participant }}</span>
+        <span class="model">{{ d.model_name or '' }}</span>
       </div>
 
       {% if d.status != 'VALID' %}
@@ -152,7 +152,12 @@
         {% endif %}
 
         <div class="approve-row">
-          {% if d.approved_by %}
+          {% if dec.action == 'HOLD' %}
+            {# Одобрять нечего: участник сознательно воздержался #}
+            <span class="muted">Воздержался — одобрять нечего</span>
+          {% elif d.risk and d.risk.verdict == 'REJECTED' %}
+            <span class="muted">Отклонено risk engine — исполнение невозможно</span>
+          {% elif d.approved_by %}
             <span class="approved">✅ одобрено ({{ d.approved_by }})</span>
             <button class="btn-secondary"
                     onclick="revokeApproval({{ round.id }}, '{{ d.participant }}')">Снять</button>

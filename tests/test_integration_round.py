@@ -34,10 +34,13 @@ def test_full_paper_trading_round(client: TestClient):
     body = created.json()
     round_id = body["round_id"]
 
-    # 4. ИИ запрашиваются автоматически при фиксации снимка: оператору не нужно
-    #    нажимать вторую кнопку. Отключается через AUTO_REQUEST_AI_ON_SNAPSHOT.
-    assert set(body["ai"]) == {"codex", "claude"}
-    assert all(status == "VALID" for status in body["ai"].values())
+    # 4. ИИ запрашиваются автоматически: снимок фиксируется сразу, а модели
+    #    думают в фоне — иначе HTTP-запрос висел бы минутами и отваливался.
+    #    TestClient выполняет фоновые задачи после ответа, поэтому к этому
+    #    моменту решения уже собраны.
+    assert body["autopilot"].startswith("запущен")
+    state = client.get(f"/api/rounds/{round_id}").json()
+    assert set(state["submitted"]) == {"codex", "claude"}
 
     snapshot = client.get(f"/api/rounds/{round_id}/snapshot").json()
     assert snapshot["stale"] is False
