@@ -99,6 +99,67 @@ def ai_collected(db: Session, round_row: Round, statuses: dict[str, str]) -> boo
     return _send(text)
 
 
+def approval_needed(db: Session, round_row: Round, proposals: dict) -> bool:
+    """Заявки прошли risk engine и ждут кнопки оператора.
+
+    Это главное уведомление боевого режима: пока оператор не нажмёт, деньги не
+    двигаются. Содержимое решений здесь раскрывать можно — раунд уже заперт, и
+    участники своё мнение изменить не могут.
+    """
+    market = db.get(Market, round_row.market_id)
+    live = get_settings().live_execution_ready()
+
+    executable = [p for p in proposals.values() if p.get("executable")]
+    if not executable:
+        return False  # ставить нечего — не дёргаем оператора
+
+    lines = [
+        f"{'🔴' if live else '📝'} <b>Заявки ждут одобрения — раунд #{round_row.id}</b>",
+        _esc(market.title if market else ""),
+        f"Фаза: <b>{_esc(round_row.phase)}</b>",
+        "",
+    ]
+    for key, entry in sorted(proposals.items()):
+        if not entry.get("executable"):
+            continue
+        edge = entry.get("net_edge")
+        edge_text = f"{edge:+.3f}" if isinstance(edge, int | float) else "—"
+        lines.append(
+            f"<b>{_esc(key.upper())}</b> — {_esc(entry.get('outcome') or '')} "
+            f"{entry.get('approved_stake', 0):.2f} USDC "
+            f"по {entry.get('expected_avg_price') or 0:.3f}"
+        )
+        lines.append(f"   edge после комиссии: <b>{edge_text}</b>")
+
+    lines.append("")
+    lines.append(
+        "💰 <b>РЕАЛЬНЫЕ ДЕНЬГИ.</b> Без вашего одобрения ордера не уйдут."
+        if live
+        else "<i>Бумажный режим: одобрение не требуется.</i>"
+    )
+    lines.append(_operator_link(round_row.id))
+    return _send("\n".join(lines))
+
+
+def draft_ready(db: Session, round_row: Round, best: dict | None = None) -> bool:
+    """Раунд по фазе AFTER_DRAFT: пики известны, есть время до начала карты."""
+    market = db.get(Market, round_row.market_id)
+    lines = [
+        f"🎭 <b>Драфт завершён — раунд #{round_row.id}</b>",
+        _esc(market.title if market else ""),
+    ]
+    if best:
+        lines.append("")
+        lines.append(
+            f"Самая уверенная заявка: <b>{_esc(best.get('participant', ''))}</b> "
+            f"{_esc(best.get('outcome') or '')} "
+            f"edge {best.get('net_edge', 0):+.3f}"
+        )
+    lines.append("")
+    lines.append("Пики учтены в snapshot. " + _operator_link(round_row.id))
+    return _send("\n".join(lines))
+
+
 def titan_reminder(round_row: Round, minutes_left: int) -> bool:
     text = (
         f"⏰ <b>Раунд #{round_row.id}</b>: до дедлайна {minutes_left} мин.\n"

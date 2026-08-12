@@ -198,6 +198,13 @@ def prepare(round_id: int, db: Session = Depends(get_db)) -> dict:
         proposals = rounds_service.prepare_round(db, row)
     except rounds_service.RoundStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    notifications.approval_needed(db, row, proposals)
+    if row.phase == Phase.AFTER_DRAFT.value:
+        executable = [p for p in proposals.values() if p.get("executable")]
+        best = max(executable, key=lambda p: p.get("net_edge") or 0, default=None)
+        notifications.draft_ready(db, row, best)
+
     settings = get_settings()
     return {
         "round_id": row.id,
