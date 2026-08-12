@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
 
 from app.adapters.market_data import MarketNotAvailable, MockMarketDataProvider
-from app.adapters.market_data.polymarket import PolymarketDataProvider
+from app.adapters.market_data.polymarket import (
+    PolymarketDataProvider,
+    classify_market_type,
+)
 from app.adapters.participants.base import ParticipantError, PortfolioView
 from app.adapters.participants.claude import ClaudeAdapter
 from app.adapters.participants.codex import CodexAdapter
@@ -128,6 +132,162 @@ def test_polymarket_adapter_raises_on_network_error():
 
 def test_polymarket_provider_declares_read_only():
     assert PolymarketDataProvider.supports_live_orders is False
+
+
+# --- поиск рынков по тегу Dota 2 -------------------------------------------
+def _gamma_market(mid: str, question: str, start: str, **extra) -> dict:
+    """Рынок в том виде, в каком его отдаёт Gamma внутри события."""
+    payload = {
+        "id": mid,
+        "question": question,
+        "outcomes": json.dumps(["Team Spirit", "Xtreme Gaming"]),
+        "outcomePrices": json.dumps(["0.69", "0.31"]),
+        "clobTokenIds": json.dumps(["tok-yes", "tok-no"]),
+        "gameStartTime": start,
+        "closed": False,
+        "active": True,
+        "liquidityNum": 19389.53,
+    }
+    payload.update(extra)
+    return payload
+
+
+def _dota_events_fixture(start: str) -> list[dict]:
+    """Событие TI с полным набором рынков — как на реальном Polymarket."""
+    return [
+        {
+            "title": "Dota 2: Team Spirit vs Xtreme Gaming (BO3) - The International Group Stage",
+            "slug": "dota2-ts8-xtreme-2026-08-13",
+            "startDate": "2026-06-01T00:00:00Z",  # у событий Gamma оно в прошлом
+            "markets": [
+                _gamma_market(
+                    "1",
+                    "Dota 2: Team Spirit vs Xtreme Gaming (BO3) - The International Group Stage",
+                    start,
+                ),
+                _gamma_market(
+                    "2", "Dota 2: Team Spirit vs Xtreme Gaming - Game 1 Winner", start
+                ),
+                _gamma_market("3", "Games Total: O/U 2.5", start),
+                _gamma_market(
+                    "4", "Game Handicap: TS (-1.5) vs Xtreme Gaming (+1.5)", start
+                ),
+                _gamma_market("5", "Game 1: Ends in Daytime?", start),
+                _gamma_market(
+                    "6",
+                    "Dota 2: Closed Match (BO3) - The International Group Stage",
+                    start,
+                    closed=True,
+                ),
+            ],
+        }
+    ]
+
+
+def _events_provider(events: list[dict], **kwargs) -> PolymarketDataProvider:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/events":
+            return httpx.Response(200, json=events)
+        return httpx.Response(404, json={})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://test")
+    return PolymarketDataProvider(
+        gamma_url="http://test", clob_url="http://test", client=client, **kwargs
+    )
+
+
+def _future() -> str:
+    return (datetime.now(UTC) + timedelta(hours=6)).isoformat()
+
+
+def _past() -> str:
+    return (datetime.now(UTC) - timedelta(hours=6)).isoformat()
+
+
+def test_polymarket_search_returns_only_main_series_market():
+    """У матча ~20-30 рынков; по умолчанию берём только победителя серии."""
+    provider = _events_provider(_dota_events_fixture(_future()))
+    refs = provider.search_markets("Dota")
+
+    assert len(refs) == 1
+    ref = refs[0]
+    assert ref.external_id == "1"
+    assert ref.market_type == "MATCH_WINNER"
+    assert ref.team_a == "Team Spirit"
+    assert ref.tournament == "The International Group Stage"
+    assert ref.event_title is not None
+
+
+def test_polymarket_search_queries_gamma_by_dota_tag():
+    """Без tag_id Gamma отдаёт случайные рынки и Dota 2 в выдачу не попадает."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["path"] = request.url.path
+        seen["tag_id"] = request.url.params.get("tag_id")
+        seen["closed"] = request.url.params.get("closed")
+        return httpx.Response(200, json=[])
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://test")
+    provider = PolymarketDataProvider(
+        gamma_url="http://test", clob_url="http://test", client=client, tag_id=102366
+    )
+    assert provider.search_markets("Dota") == []
+    assert seen["path"] == "/events"
+    assert seen["tag_id"] == "102366"
+    assert seen["closed"] == "false"
+
+
+def test_polymarket_search_skips_started_matches():
+    provider = _events_provider(_dota_events_fixture(_past()))
+    assert provider.search_markets("Dota") == []
+
+    permissive = _events_provider(_dota_events_fixture(_past()), only_upcoming=False)
+    assert len(permissive.search_markets("Dota")) == 1
+
+
+def test_polymarket_search_can_include_submarkets():
+    """main_market_only=false открывает карты, форы и тоталы — но не закрытые рынки."""
+    provider = _events_provider(_dota_events_fixture(_future()), main_market_only=False)
+    refs = provider.search_markets("Dota")
+
+    ids = {r.external_id for r in refs}
+    assert ids == {"1", "2", "3", "4", "5"}  # "6" закрыт у источника
+    by_id = {r.external_id: r.market_type for r in refs}
+    assert by_id["1"] == "MATCH_WINNER"
+    assert by_id["2"] == "MAP_WINNER"
+    assert by_id["3"] == "TOTALS"
+    assert by_id["4"] == "HANDICAP"
+    assert by_id["5"] == "SPECIAL"
+
+
+def test_polymarket_search_filters_by_tournament_query():
+    provider = _events_provider(_dota_events_fixture(_future()))
+    assert len(provider.search_markets("The International")) == 1
+    assert provider.search_markets("ESL One") == []
+
+
+def test_classify_market_type_prefers_handicap_over_map():
+    """«Game Handicap: TS (-1.5)…» содержит и game, и фору — это фора."""
+    assert classify_market_type("Game Handicap: TS (-1.5) vs XG (+1.5)") == "HANDICAP"
+    assert classify_market_type("Dota 2: A vs B - Game 2 Winner") == "MAP_WINNER"
+    assert classify_market_type("Games Total: O/U 2.5") == "TOTALS"
+    assert classify_market_type("Dota 2: A vs B (BO5) - TI Playoffs") == "MATCH_WINNER"
+    assert classify_market_type("Match Winner") == "MATCH_WINNER"
+    assert classify_market_type("Which Hero Will be Announced?") == "SPECIAL"
+    # номер карты без «winner» — экзотика, иначе исказится статистика по типам
+    assert classify_market_type("Game 1: Ends in Daytime?") == "SPECIAL"
+
+
+def test_polymarket_parses_gamma_space_separated_datetime():
+    """Gamma отдаёт `2026-08-13 05:00:00+00`, а не ISO с `T`."""
+    # only_upcoming=False — дата фиксированная, тест не должен протухнуть.
+    provider = _events_provider(
+        _dota_events_fixture("2026-08-13 05:00:00+00"), only_upcoming=False
+    )
+    refs = provider.search_markets("Dota", limit=5)
+    assert len(refs) == 1
+    assert refs[0].starts_at == datetime(2026, 8, 13, 5, 0, tzinfo=UTC)
 
 
 # --- участники: mock-режим --------------------------------------------------

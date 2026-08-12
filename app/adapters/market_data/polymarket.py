@@ -1,11 +1,19 @@
 """Polymarket data adapter — ТОЛЬКО публичные read-only эндпоинты.
 
 Используются:
-  * Gamma API  (`/markets`, `/events`) — метаданные рынков;
+  * Gamma API  (`/events`, `/markets`) — метаданные событий и рынков;
   * CLOB API   (`/book`)               — стакан по токену исхода.
 
 Ключи и приватные ключи не требуются и намеренно не поддерживаются: адаптер
 физически не умеет подписывать и отправлять ордера.
+
+Поиск идёт по тегу Dota 2 в Gamma (`POLYMARKET_GAMMA_TAG_ID`, по умолчанию
+102366), а не перебором всех активных рынков: на Polymarket одновременно живут
+тысячи рынков, и выборка «первые N активных» не содержит Dota 2 вовсе.
+
+У одного матча Polymarket публикует ~20-30 рынков (победитель серии, победитель
+каждой карты, фора, тоталы, экзотика). Для эксперимента по умолчанию берётся
+только основной рынок серии — см. `POLYMARKET_MAIN_MARKET_ONLY`.
 
 Если рынок исчез, закрылся или сменил структуру — поднимается `MarketNotAvailable`,
 раунд в таком случае не создаётся.
@@ -15,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,8 +41,25 @@ logger = logging.getLogger(__name__)
 
 _DOTA_HINTS = ("dota", "the international", "ti20", "ti 20")
 
+# --- классификация типов рынка ---------------------------------------------
+# Значения market_type попадают в статистику («прибыль по типам рынков»),
+# поэтому набор фиксированный и стабильный.
+MARKET_TYPE_MATCH = "MATCH_WINNER"
+MARKET_TYPE_MAP = "MAP_WINNER"
+MARKET_TYPE_HANDICAP = "HANDICAP"
+MARKET_TYPE_TOTALS = "TOTALS"
+MARKET_TYPE_SPECIAL = "SPECIAL"
+
+_MAP_NUM_RE = re.compile(r"\b(game|map)\s*\d+\b", re.IGNORECASE)
+_HANDICAP_RE = re.compile(r"handicap|\([+-]\d", re.IGNORECASE)
+_TOTALS_RE = re.compile(r"\btotal\b|\bo/u\b|over/under|\bo\d|\bu\d", re.IGNORECASE)
+# Признак основного рынка серии: формат Polymarket «… (BO3) - <турнир>».
+_SERIES_RE = re.compile(r"\(bo\d\)", re.IGNORECASE)
+_MAIN_TITLES = ("match winner", "series winner", "moneyline")
+
 
 def _parse_dt(value: Any) -> datetime | None:
+    """Gamma отдаёт время и как ISO с `T`, и как `2026-08-13 05:00:00+00`."""
     if not value or not isinstance(value, str):
         return None
     try:
@@ -62,6 +88,43 @@ def _to_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def classify_market_type(question: str, event_title: str | None = None) -> str:
+    """Определить тип рынка по его вопросу.
+
+    Порядок проверок важен: «Game Handicap: TS (-1.5)…» содержит и слово game,
+    и фору — это фора, а не победитель карты.
+    """
+    q = (question or "").strip()
+    if not q:
+        return MARKET_TYPE_SPECIAL
+    # Точное совпадение с названием события — это основной рынок серии.
+    if event_title and q.strip().lower() == event_title.strip().lower():
+        return MARKET_TYPE_MATCH
+    low = q.lower()
+    if _HANDICAP_RE.search(low):
+        return MARKET_TYPE_HANDICAP
+    if _TOTALS_RE.search(low):
+        return MARKET_TYPE_TOTALS
+    # «Game 1 Winner» — победитель карты, но «Game 1: Ends in Daytime?» — экзотика.
+    if _MAP_NUM_RE.search(low) and "winner" in low:
+        return MARKET_TYPE_MAP
+    if any(t in low for t in _MAIN_TITLES) or _SERIES_RE.search(low):
+        return MARKET_TYPE_MATCH
+    return MARKET_TYPE_SPECIAL
+
+
+def _split_tournament(event_title: str | None, question: str) -> str | None:
+    """«Dota 2: A vs B (BO3) - The International Group Stage» → турнир."""
+    source = event_title or question or ""
+    if " - " in source:
+        tail = source.rsplit(" - ", 1)[-1].strip()
+        if tail:
+            return tail
+    if "international" in source.lower():
+        return "The International"
+    return "Dota 2"
+
+
 class PolymarketDataProvider(MarketDataProvider):
     name = "polymarket"
     supports_live_orders = False
@@ -73,11 +136,22 @@ class PolymarketDataProvider(MarketDataProvider):
         timeout: float | None = None,
         client: httpx.Client | None = None,
         raw_sink: Any = None,
+        tag_id: int | None = None,
+        main_market_only: bool | None = None,
+        only_upcoming: bool | None = None,
     ) -> None:
         s = get_settings()
         self.gamma_url = (gamma_url or s.polymarket_gamma_url).rstrip("/")
         self.clob_url = (clob_url or s.polymarket_clob_url).rstrip("/")
         self.timeout = timeout or s.polymarket_timeout_seconds
+        self.tag_id = tag_id if tag_id is not None else s.polymarket_gamma_tag_id
+        self.main_market_only = (
+            main_market_only if main_market_only is not None else s.polymarket_main_market_only
+        )
+        self.only_upcoming = (
+            only_upcoming if only_upcoming is not None else s.polymarket_only_upcoming
+        )
+        self.event_limit = s.polymarket_event_limit
         self._client = client or httpx.Client(timeout=self.timeout, follow_redirects=True)
         self._owns_client = client is None
         # callable(source, external_id, endpoint, payload) — сохранение сырых ответов
@@ -108,56 +182,114 @@ class PolymarketDataProvider(MarketDataProvider):
         low = text.lower()
         return any(hint in low for hint in _DOTA_HINTS)
 
-    def _normalize(self, raw: dict) -> MarketRef:
+    def _normalize(self, raw: dict, event: dict | None = None) -> MarketRef:
         outcomes = _as_list(raw.get("outcomes")) or ["Yes", "No"]
         title = raw.get("question") or raw.get("title") or raw.get("slug") or "unknown market"
-        event = raw.get("events") or []
-        event_title = None
-        if isinstance(event, list) and event:
-            event_title = (event[0] or {}).get("title")
+
+        # `/markets/{id}` не отдаёт вложенные события, `/events` — отдаёт.
+        if event is None:
+            embedded = raw.get("events")
+            if isinstance(embedded, list) and embedded and isinstance(embedded[0], dict):
+                event = embedded[0]
+        event_title = (event or {}).get("title")
+
         team_a = str(outcomes[0]) if len(outcomes) > 0 else None
         team_b = str(outcomes[1]) if len(outcomes) > 1 else None
         return MarketRef(
             source=self.name,
             external_id=str(raw.get("id") or raw.get("conditionId") or raw.get("slug")),
-            slug=raw.get("slug"),
+            slug=raw.get("slug") or (event or {}).get("slug"),
             title=title,
-            market_type=raw.get("marketType") or "MATCH_WINNER",
+            market_type=classify_market_type(title, event_title),
             event_title=event_title,
-            tournament="The International" if "international" in title.lower() else "Dota 2",
+            tournament=_split_tournament(event_title, title),
             team_a=team_a,
             team_b=team_b,
             yes_label=team_a or "YES",
             no_label=team_b or "NO",
-            starts_at=_parse_dt(raw.get("gameStartTime") or raw.get("startDate")),
+            starts_at=_parse_dt(
+                raw.get("gameStartTime")
+                or raw.get("startDate")
+                or (event or {}).get("startDate")
+            ),
             raw=raw,
         )
 
+    # ---- отбор -------------------------------------------------------------
+    @staticmethod
+    def _is_tradeable(raw: dict) -> bool:
+        if raw.get("closed") is True or raw.get("archived") is True:
+            return False
+        if raw.get("active") is False:
+            return False
+        return True
+
+    def _matches_query(self, query: str, ref: MarketRef) -> bool:
+        """Пустой запрос и «dota» пропускают всё; иначе — подстрока.
+
+        Позволяет оператору сузить поиск до конкретного турнира, например
+        `POLYMARKET_SEARCH_QUERY="The International"`.
+        """
+        q = (query or "").strip().lower()
+        if not q or q in ("dota", "dota2", "dota 2"):
+            return True
+        haystack = " ".join(
+            str(x) for x in (ref.title, ref.event_title, ref.tournament, ref.slug) if x
+        ).lower()
+        return q in haystack
+
     # ---- публичный интерфейс ----------------------------------------------
     def search_markets(self, query: str = "Dota", limit: int = 25) -> list[MarketRef]:
-        payload = self._get(
-            f"{self.gamma_url}/markets",
-            params={"active": "true", "closed": "false", "limit": max(limit * 4, 50)},
-        )
-        items = payload if isinstance(payload, list) else payload.get("data", [])
-        self._store_raw("search", "/markets", {"count": len(items), "query": query})
+        """Найти рынки Dota 2 / The International по тегу Gamma.
 
+        По умолчанию возвращает только основной рынок серии каждого матча и
+        только матчи, которые ещё не начались.
+        """
+        payload = self._get(
+            f"{self.gamma_url}/events",
+            params={
+                "tag_id": self.tag_id,
+                "closed": "false",
+                "limit": self.event_limit,
+            },
+        )
+        events = payload if isinstance(payload, list) else payload.get("data", [])
+        self._store_raw(
+            "search",
+            "/events",
+            {"tag_id": self.tag_id, "events": len(events), "query": query},
+        )
+
+        now = datetime.now(UTC)
         refs: list[MarketRef] = []
-        for raw in items:
-            if not isinstance(raw, dict):
+        for event in events:
+            if not isinstance(event, dict):
                 continue
-            haystack = " ".join(
-                str(raw.get(field, "")) for field in ("question", "title", "slug", "description")
+            markets = event.get("markets")
+            if not isinstance(markets, list):
+                continue
+            for raw in markets:
+                if not isinstance(raw, dict) or not self._is_tradeable(raw):
+                    continue
+                try:
+                    ref = self._normalize(raw, event=event)
+                except Exception:  # pragma: no cover - пропускаем битые записи
+                    logger.warning("пропущен рынок с неожиданной структурой")
+                    continue
+                if self.main_market_only and ref.market_type != MARKET_TYPE_MATCH:
+                    continue
+                if self.only_upcoming and (ref.starts_at is None or ref.starts_at <= now):
+                    continue
+                if not self._matches_query(query, ref):
+                    continue
+                refs.append(ref)
+
+        refs.sort(key=lambda r: (r.starts_at or datetime.max.replace(tzinfo=UTC)))
+        if not refs:
+            logger.info(
+                "по тегу %s не найдено предстоящих рынков (query=%r)", self.tag_id, query
             )
-            if not (self._looks_like_dota(haystack) or query.lower() in haystack.lower()):
-                continue
-            try:
-                refs.append(self._normalize(raw))
-            except Exception:  # pragma: no cover - пропускаем битые записи
-                logger.warning("пропущен рынок с неожиданной структурой")
-            if len(refs) >= limit:
-                break
-        return refs
+        return refs[:limit]
 
     def get_market(self, external_id: str) -> MarketRef:
         payload = self._get(f"{self.gamma_url}/markets/{external_id}")
@@ -197,7 +329,10 @@ class PolymarketDataProvider(MarketDataProvider):
         yes_price = prices[0] if prices else _to_float(raw.get("lastTradePrice"), 0.5)
         no_price = prices[1] if len(prices) > 1 else round(1.0 - yes_price, 4)
 
-        yes_bids = yes_asks = no_bids = no_asks = []
+        yes_bids: list[tuple[float, float]] = []
+        yes_asks: list[tuple[float, float]] = []
+        no_bids: list[tuple[float, float]] = []
+        no_asks: list[tuple[float, float]] = []
         if len(token_ids) >= 2:
             try:
                 yes_bids, yes_asks = self._fetch_book(str(token_ids[0]))

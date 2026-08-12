@@ -17,7 +17,14 @@ os.environ["MARKET_DATA_PROVIDER"] = "mock"
 from app.adapters.market_data.factory import set_provider_override  # noqa: E402
 from app.adapters.market_data.mock import MockMarketDataProvider  # noqa: E402
 from app.adapters.participants.factory import clear_adapter_overrides  # noqa: E402
-from app.config import reset_settings_cache  # noqa: E402
+from app.config import RiskLimits, Settings, reset_settings_cache  # noqa: E402
+
+# Рабочий `.env` оператора не должен влиять на тесты: pydantic-settings читает
+# файл даже тогда, когда переменной окружения нет, поэтому одного delenv мало.
+# Без этого, например, CODEX_TRANSPORT=cli на машине без установленного `codex`
+# ронял четыре теста, не имеющих к Codex отношения.
+Settings.model_config["env_file"] = None
+RiskLimits.model_config["env_file"] = None
 from app.db.base import Base, configure_engine, get_sessionmaker  # noqa: E402
 from app.db.models import Market  # noqa: E402
 from app.services.seed import seed_participants  # noqa: E402

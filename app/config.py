@@ -61,6 +61,14 @@ class Settings(BaseSettings):
     polymarket_clob_url: str = "https://clob.polymarket.com"
     polymarket_timeout_seconds: float = 15.0
     polymarket_search_query: str = "Dota"
+    # Тег Dota 2 в Gamma. Поиск идёт по нему, а не перебором активных рынков:
+    # на Polymarket тысячи рынков и Dota 2 в первые N просто не попадает.
+    polymarket_gamma_tag_id: int = 102366
+    polymarket_event_limit: int = 100
+    # У матча ~20-30 рынков (карты, форы, тоталы). По умолчанию берём только
+    # основной рынок серии — эксперимент про победителя матча.
+    polymarket_main_market_only: bool = True
+    polymarket_only_upcoming: bool = True
 
     # участники (ключи только из окружения)
     openai_api_key: str | None = Field(default=None, repr=False)
