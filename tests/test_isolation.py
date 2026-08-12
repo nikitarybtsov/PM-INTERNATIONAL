@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.adapters.participants.prompting import build_prompt
 from app.constants import Phase, RoundStatus
 from app.db.models import Market
-from app.services import portfolio as pf, rounds as rounds_service
+from app.services import portfolio as pf
+from app.services import rounds as rounds_service
 
 
 # --- раздельные банки -------------------------------------------------------

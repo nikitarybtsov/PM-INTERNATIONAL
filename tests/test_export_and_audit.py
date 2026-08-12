@@ -12,7 +12,8 @@ from sqlalchemy.orm import Session
 from app.constants import Phase
 from app.db.models import AuditEvent, Market
 from app.schemas.decision import TradeDecisionInput
-from app.services import audit, export, rounds as rounds_service, settlement
+from app.services import audit, export, settlement
+from app.services import rounds as rounds_service
 
 TITAN_BUY = TradeDecisionInput(
     action="BUY_YES",

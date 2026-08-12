@@ -1,0 +1,40 @@
+services:
+  app:
+    build: .
+    container_name: pm-international
+    ports:
+      - "8000:8000"
+    environment:
+      # SQLite по умолчанию. Для PostgreSQL раскомментируйте сервис db ниже
+      # и строку DATABASE_URL.
+      DATABASE_URL: sqlite:////app/data/pm.db
+      # DATABASE_URL: postgresql+psycopg://pm:pm@db:5432/pm
+      MARKET_DATA_PROVIDER: ${MARKET_DATA_PROVIDER:-mock}
+      EXPORT_DIR: /app/exports
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Ключи НЕ хранятся в образе и репозитории — только через .env
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.1}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-4-5}
+    volumes:
+      - ./data:/app/data
+      - ./exports:/app/exports
+    restart: unless-stopped
+
+  # Раскомментируйте для PostgreSQL вместо SQLite.
+  # db:
+  #   image: postgres:16-alpine
+  #   environment:
+  #     POSTGRES_USER: pm
+  #     POSTGRES_PASSWORD: pm
+  #     POSTGRES_DB: pm
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U pm"]
+  #     interval: 5s
+  #     retries: 10
+
+# volumes:
+#   pgdata:

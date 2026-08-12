@@ -18,11 +18,12 @@ venv/
 .coverage
 htmlcov/
 
-# data
+# data (каталоги сохраняем, содержимое игнорируем)
 *.db
 *.sqlite3
-data/
-exports/
+data/*
+!data/.gitkeep
+exports/*
 !exports/.gitkeep
 
 # os / editors

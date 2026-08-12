@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.constants import Phase, RiskVerdict, RoundStatus
 from app.db.models import Market, Round
 from app.schemas.decision import TradeDecisionInput
-from app.services import rounds as rounds_service, snapshots as snapshot_service
+from app.services import rounds as rounds_service
+from app.services import snapshots as snapshot_service
 
 TITAN_HOLD = TradeDecisionInput(
     action="HOLD",

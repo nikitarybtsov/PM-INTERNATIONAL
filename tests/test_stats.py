@@ -10,7 +10,8 @@ from sqlalchemy.orm import Session
 from app.constants import Phase
 from app.db.models import Market
 from app.schemas.decision import TradeDecisionInput
-from app.services import rounds as rounds_service, settlement, stats
+from app.services import rounds as rounds_service
+from app.services import settlement, stats
 from app.services.stats import _forecast_stats, _max_drawdown
 
 TITAN_BUY = TradeDecisionInput(

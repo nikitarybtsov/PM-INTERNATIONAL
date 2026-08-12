@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 from app.constants import Action, OrderStatus, Phase, PositionStatus, RiskVerdict
 from app.db.models import Decision, Market, Round, Snapshot
 from app.schemas.snapshot import BookLevel, MarketSnapshot, SnapshotBook, SnapshotMarketInfo
-from app.services import paper_engine, portfolio as pf, rounds as rounds_service, settlement
+from app.services import paper_engine, settlement
+from app.services import portfolio as pf
+from app.services import rounds as rounds_service
 from app.services.book import walk_buy, walk_sell
 from app.services.risk_engine import RiskOutcome
 

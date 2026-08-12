@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 from app.config import LIVE_TRADING_ENABLED, get_settings
 from app.constants import Phase
 from app.db.models import Market
-from app.services import audit, rounds as rounds_service
+from app.services import audit
+from app.services import rounds as rounds_service
 
 ROOT = Path(__file__).resolve().parent.parent
 APP_DIR = ROOT / "app"
@@ -113,8 +114,9 @@ def test_no_api_keys_persisted_in_database(db: Session, seeded, market: Market, 
     rounds_service.request_ai_decisions(db, round_row)
     db.commit()
 
-    from app.db.base import get_engine
     from sqlalchemy import text as sql_text
+
+    from app.db.base import get_engine
 
     with get_engine().connect() as conn:
         tables = [
