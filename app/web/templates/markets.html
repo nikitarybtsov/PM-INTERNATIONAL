@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Матчи{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h2>Карточки матчей</h2>
+  <p class="muted">
+    Источник данных: <b>{{ provider }}</b>. Кнопка «Обновить список» тянет рынки Dota 2 /
+    The International у активного провайдера. В mock-режиме это демо-набор без сети.
+  </p>
+  <button onclick="act('/api/markets/refresh', {with_markets: true, limit: 10}, 'Список рынков обновлён')">
+    Обновить список рынков
+  </button>
+</div>
+
+{% for item in markets %}
+{% set m = item.row %}
+<div class="card">
+  <h2>{{ m.title }}</h2>
+  <div class="muted">
+    {{ m.tournament or '—' }} · тип: {{ m.market_type }} · источник: {{ m.source }}/{{ m.external_id }}
+    {% if m.starts_at %} · старт: {{ m.starts_at }}{% endif %}
+    · статус: <span class="badge">{{ m.status }}</span>
+    {% if item.settled %} · результат: <span class="badge executed">{{ item.settled }}</span>{% endif %}
+  </div>
+  <div class="muted">YES = {{ m.yes_label }} · NO = {{ m.no_label }}</div>
+
+  {% if item.active_round_id %}
+    <p class="notice warn">
+      По этому рынку идёт раунд
+      <a href="/ui/rounds/{{ item.active_round_id }}">#{{ item.active_round_id }}</a>.
+      Новый раунд можно создать только после его исполнения.
+    </p>
+  {% endif %}
+
+  <div class="grid cols-2">
+    <div>
+      <h3>Заметки оператора</h3>
+      <p class="muted">Составы, замены, новости турнира. Попадут в следующий snapshot — одинаково для всех.</p>
+      <textarea id="notes-{{ m.id }}">{{ m.operator_notes or '' }}</textarea>
+      <button class="secondary" style="margin-top:8px"
+        onclick="act('/api/markets/{{ m.id }}/notes', {notes: document.getElementById('notes-{{ m.id }}').value}, 'Заметки сохранены')">
+        Сохранить заметки
+      </button>
+    </div>
+
+    <div>
+      <h3>Новый раунд</h3>
+      <label for="phase-{{ m.id }}">Фаза</label>
+      <select id="phase-{{ m.id }}" onchange="document.getElementById('map-wrap-{{ m.id }}').style.display = this.value === 'BETWEEN_MAPS' ? 'block' : 'none'">
+        {% for p in phases %}<option value="{{ p }}">{{ p }}</option>{% endfor %}
+      </select>
+      <div id="map-wrap-{{ m.id }}" style="display:none">
+        <label for="map-{{ m.id }}">Номер завершённой карты (подтверждение оператора)</label>
+        <input id="map-{{ m.id }}" type="number" min="1" value="1">
+      </div>
+      <label for="ctx-{{ m.id }}">Контекст для snapshot (необязательно)</label>
+      <textarea id="ctx-{{ m.id }}" placeholder="напр.: у Falcons замена на 4 позиции; серия Bo3, счёт 1:0"></textarea>
+      <button style="margin-top:8px" onclick="createRound({{ m.id }})">Зафиксировать snapshot и открыть раунд</button>
+    </div>
+  </div>
+
+  <div style="margin-top:14px">
+    <h3>Результат рынка</h3>
+    <p class="muted">Оператор выставляет результат вручную. После расчёта банки и статистика обновляются.</p>
+    <button class="secondary" {% if item.settled %}disabled{% endif %}
+      onclick="act('/api/markets/{{ m.id }}/settle', {winning_outcome: 'YES'}, 'Рынок рассчитан: победил YES')">
+      Победил YES ({{ m.yes_label }})
+    </button>
+    <button class="secondary" {% if item.settled %}disabled{% endif %}
+      onclick="act('/api/markets/{{ m.id }}/settle', {winning_outcome: 'NO'}, 'Рынок рассчитан: победил NO')">
+      Победил NO ({{ m.no_label }})
+    </button>
+  </div>
+</div>
+{% else %}
+<div class="card"><p class="muted">Рынков нет. Нажмите «Обновить список рынков».</p></div>
+{% endfor %}
+
+<script>
+async function createRound(marketId) {
+  const phase = document.getElementById(`phase-${marketId}`).value;
+  const body = {
+    market_id: marketId,
+    phase: phase,
+    operator_context: document.getElementById(`ctx-${marketId}`).value || null,
+  };
+  if (phase === "BETWEEN_MAPS") {
+    body.map_number = parseInt(document.getElementById(`map-${marketId}`).value || "1", 10);
+  }
+  try {
+    const result = await api("/api/rounds", { method: "POST", body: JSON.stringify(body) });
+    window.location.href = `/ui/rounds/${result.round_id}`;
+  } catch (err) {
+    flash(err.message, "err");
+  }
+}
+</script>
+{% endblock %}

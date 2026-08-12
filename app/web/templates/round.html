@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Раунд #{{ round.id }}{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h2>Раунд #{{ round.id }} — {{ market.title if market else '—' }}</h2>
+  <div class="muted">
+    фаза: <b>{{ round.phase }}</b>
+    {% if snapshot.map_number %} · карта {{ snapshot.map_number }} завершена{% endif %}
+    · статус: <span class="badge {{ round.status|lower }}">{{ round.status }}</span>
+    · snapshot #{{ snapshot.id }} (hash {{ snapshot.payload_hash[:12] }}…)
+    {% if stale %}<span class="badge stale">УСТАРЕЛ</span>{% endif %}
+  </div>
+  {% if stale %}
+  <p class="notice err">Snapshot устарел: {{ stale_reason }}. Решения по нему будут отклонены risk engine.</p>
+  {% endif %}
+
+  <p class="notice">
+    Подали решение: <b>{{ state.submitted|join(', ') or '—' }}</b> ·
+    ждём: <b>{{ state.awaiting|join(', ') or '—' }}</b>.
+    Содержимое решений скрыто до исполнения раунда.
+  </p>
+
+  <div style="display:flex; gap:8px; flex-wrap:wrap">
+    <button onclick="act('/api/rounds/{{ round.id }}/request-ai', undefined, 'Решения Codex и Claude получены')"
+            {% if round.status != 'OPEN' %}disabled{% endif %}>
+      1. Запросить Codex + Claude
+    </button>
+    <a class="btn secondary" href="/ui/rounds/{{ round.id }}/titan">2. Форма Титана</a>
+    <button onclick="act('/api/rounds/{{ round.id }}/execute', undefined, 'Risk engine и paper execution отработали')"
+            {% if round.status != 'LOCKED' %}disabled{% endif %}>
+      3. Risk engine + исполнение
+    </button>
+    <button onclick="act('/api/rounds/{{ round.id }}/reveal', undefined, 'Решения раскрыты')"
+            {% if round.status not in ['EXECUTED', 'REVEALED'] %}disabled{% endif %}>
+      4. Раскрыть решения
+    </button>
+    <button class="danger" onclick="act('/api/rounds/{{ round.id }}/cancel', undefined, 'Раунд отменён')"
+            {% if round.status in ['EXECUTED', 'REVEALED', 'CANCELLED'] %}disabled{% endif %}>
+      Отменить раунд
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Единый snapshot (одинаковый для всех участников)</h2>
+  <div class="grid cols-2">
+    <div>
+      <table>
+        <tr><th>Параметр</th><th>Значение</th></tr>
+        <tr><td>Команды</td><td>{{ snapshot_payload.market.team_a }} vs {{ snapshot_payload.market.team_b }}</td></tr>
+        <tr><td>Тип рынка</td><td>{{ snapshot_payload.market.market_type }}</td></tr>
+        <tr><td>Старт матча</td><td>{{ snapshot_payload.market.starts_at or '—' }}</td></tr>
+        <tr><td>Цена YES / NO</td><td>{{ snapshot_payload.yes_price }} / {{ snapshot_payload.no_price }}</td></tr>
+        <tr><td>Ликвидность</td><td>{{ snapshot_payload.liquidity_usdc }} USDC</td></tr>
+        <tr><td>Изменение 1ч / 24ч</td>
+            <td>{{ snapshot_payload.price_change_1h }} / {{ snapshot_payload.price_change_24h }}</td></tr>
+        <tr><td>Снят</td><td>{{ snapshot_payload.captured_at }} (TTL {{ snapshot.ttl_seconds }} c)</td></tr>
+        <tr><td>Контекст оператора</td><td>{{ snapshot_payload.operator_context or '—' }}</td></tr>
+      </table>
+    </div>
+    <div class="book">
+      <div>
+        <h3>YES — стакан</h3>
+        <table>
+          <tr><th>bid</th><th class="num">размер</th><th>ask</th><th class="num">размер</th></tr>
+          {% for i in range(4) %}
+          <tr>
+            <td>{{ snapshot_payload.yes_book.bids[i].price if snapshot_payload.yes_book.bids|length > i else '—' }}</td>
+            <td class="num">{{ '%.1f'|format(snapshot_payload.yes_book.bids[i].size) if snapshot_payload.yes_book.bids|length > i else '' }}</td>
+            <td>{{ snapshot_payload.yes_book.asks[i].price if snapshot_payload.yes_book.asks|length > i else '—' }}</td>
+            <td class="num">{{ '%.1f'|format(snapshot_payload.yes_book.asks[i].size) if snapshot_payload.yes_book.asks|length > i else '' }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      <div>
+        <h3>NO — стакан</h3>
+        <table>
+          <tr><th>bid</th><th class="num">размер</th><th>ask</th><th class="num">размер</th></tr>
+          {% for i in range(4) %}
+          <tr>
+            <td>{{ snapshot_payload.no_book.bids[i].price if snapshot_payload.no_book.bids|length > i else '—' }}</td>
+            <td class="num">{{ '%.1f'|format(snapshot_payload.no_book.bids[i].size) if snapshot_payload.no_book.bids|length > i else '' }}</td>
+            <td>{{ snapshot_payload.no_book.asks[i].price if snapshot_payload.no_book.asks|length > i else '—' }}</td>
+            <td class="num">{{ '%.1f'|format(snapshot_payload.no_book.asks[i].size) if snapshot_payload.no_book.asks|length > i else '' }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if revealed %}
+<div class="card">
+  <h2>Раскрытие решений</h2>
+  <table>
+    <tr>
+      <th>Участник</th><th>Действие</th><th class="num">P(YES)</th><th class="num">Рынок</th>
+      <th class="num">Edge</th><th class="num">Ставка</th><th class="num">Уверенность</th>
+      <th>Risk</th><th>Исполнение</th><th>Обоснование</th>
+    </tr>
+    {% for d in decisions %}
+    {% set dec = d.decision %}
+    <tr>
+      <td><b>{{ d.display_name }}</b><div class="muted">{{ d.model_name }}<br>prompt {{ d.prompt_version }}</div></td>
+      <td>{{ dec.action if d.status == 'VALID' else d.status }}</td>
+      <td class="num">{{ '%.3f'|format(dec.estimated_probability) if dec.estimated_probability is defined and dec.estimated_probability is not none else '—' }}</td>
+      <td class="num">{{ '%.3f'|format(dec.market_probability) if dec.market_probability is defined and dec.market_probability is not none else '—' }}</td>
+      <td class="num">{{ '%+.3f'|format(dec.edge) if dec.edge is defined and dec.edge is not none else '—' }}</td>
+      <td class="num">{{ '%.2f'|format(dec.stake_usdc) if dec.stake_usdc is defined and dec.stake_usdc is not none else '—' }}</td>
+      <td class="num">{{ '%.2f'|format(dec.confidence) if dec.confidence is defined and dec.confidence is not none else '—' }}</td>
+      <td>
+        {% if d.risk %}
+          <span class="badge">{{ d.risk.verdict }}</span>
+          <div class="muted">{{ '%.2f'|format(d.risk.requested_stake) }} → {{ '%.2f'|format(d.risk.approved_stake) }} $</div>
+          <ul class="muted" style="padding-left:16px;margin:4px 0">
+            {% for r in d.risk.reasons %}<li>{{ r.message }}</li>{% endfor %}
+          </ul>
+        {% else %}—{% endif %}
+      </td>
+      <td>
+        {% if d.order %}
+          <span class="badge">{{ d.order.status }}</span>
+          <div class="muted">
+            {{ d.order.outcome }} · {{ '%.2f'|format(d.order.filled_size) }} шт @
+            {{ '%.4f'|format(d.order.avg_fill_price) }}<br>
+            {{ '%.2f'|format(d.order.notional) }} $ · slippage {{ '%.0f'|format(d.order.slippage_bps) }} б.п.
+            {% if d.order.reject_reason %}<br>{{ d.order.reject_reason }}{% endif %}
+          </div>
+        {% else %}<span class="muted">сделки не было</span>{% endif %}
+      </td>
+      <td style="max-width:280px">
+        {{ dec.short_reason if dec.short_reason is defined else (d.validation_error or '—') }}
+        {% if dec.key_factors is defined and dec.key_factors %}
+        <div class="muted"><b>За:</b> {{ dec.key_factors|join('; ') }}</div>
+        {% endif %}
+        {% if dec.risk_factors is defined and dec.risk_factors %}
+        <div class="muted"><b>Риски:</b> {{ dec.risk_factors|join('; ') }}</div>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="card">
+  <h2>Раскрытие решений</h2>
+  <p class="notice warn">
+    Решения скрыты. Они станут видны после того, как все трое подадут ответ и раунд будет исполнен
+    (текущий статус: {{ round.status }}).
+  </p>
+</div>
+{% endif %}
+{% endblock %}

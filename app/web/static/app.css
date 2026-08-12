@@ -1,0 +1,113 @@
+:root {
+  --bg: #f5f6f8;
+  --card: #ffffff;
+  --line: #e4e7ec;
+  --text: #16191d;
+  --muted: #6b7280;
+  --accent: #3757d8;
+  --pos: #178a4c;
+  --neg: #c0392b;
+  --codex: #2f7ed8;
+  --claude: #d97a2b;
+  --titan: #3f9e5a;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+}
+
+header.top {
+  background: #10131a;
+  color: #fff;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+header.top a { color: #cfd6e4; text-decoration: none; font-size: 14px; }
+header.top a:hover, header.top a.active { color: #fff; }
+header.top .brand { font-weight: 700; font-size: 16px; margin-right: 8px; }
+.pill {
+  padding: 2px 10px; border-radius: 99px; font-size: 12px; font-weight: 600;
+  background: #1f8a4c; color: #fff;
+}
+.pill.warn { background: #b45309; }
+
+main { padding: 24px; max-width: 1240px; margin: 0 auto; }
+
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 18px 20px; margin-bottom: 18px;
+}
+.card h2 { margin: 0 0 12px; font-size: 17px; }
+.card h3 { margin: 16px 0 8px; font-size: 15px; }
+
+.grid { display: grid; gap: 16px; }
+.grid.cols-3 { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+.grid.cols-2 { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { border-bottom: 1px solid #eef1f5; padding: 8px 10px; text-align: left; vertical-align: top; }
+th { background: #fafbfc; font-weight: 600; font-size: 13px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.pos { color: var(--pos); font-weight: 600; }
+.neg { color: var(--neg); font-weight: 600; }
+.muted { color: var(--muted); font-size: 13px; }
+
+.badge {
+  display: inline-block; padding: 2px 9px; border-radius: 99px;
+  font-size: 12px; background: #eef2ff; color: #3730a3; font-weight: 600;
+}
+.badge.open { background: #e0f2fe; color: #075985; }
+.badge.locked { background: #fef3c7; color: #92400e; }
+.badge.executed { background: #dcfce7; color: #14532d; }
+.badge.revealed { background: #ede9fe; color: #4c1d95; }
+.badge.cancelled { background: #f3f4f6; color: #4b5563; }
+.badge.stale { background: #fee2e2; color: #991b1b; }
+
+.scorecard { border-left: 4px solid var(--accent); }
+.scorecard.codex { border-left-color: var(--codex); }
+.scorecard.claude { border-left-color: var(--claude); }
+.scorecard.titan { border-left-color: var(--titan); }
+.scorecard .equity { font-size: 26px; font-weight: 700; }
+
+button, .btn {
+  background: var(--accent); color: #fff; border: 0; border-radius: 8px;
+  padding: 8px 14px; font-size: 14px; cursor: pointer; text-decoration: none;
+  display: inline-block;
+}
+button:hover, .btn:hover { filter: brightness(1.07); }
+button:disabled { background: #b9c0d4; cursor: not-allowed; }
+button.secondary, .btn.secondary { background: #4b5563; }
+button.danger { background: var(--neg); }
+
+label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
+input, select, textarea {
+  width: 100%; padding: 8px 10px; border: 1px solid #cbd2dc; border-radius: 8px;
+  font-size: 14px; font-family: inherit; background: #fff;
+}
+textarea { min-height: 70px; resize: vertical; }
+.form-row { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+
+pre {
+  background: #0f1720; color: #d7e0ea; padding: 12px; border-radius: 8px;
+  overflow-x: auto; font-size: 12px; line-height: 1.45;
+}
+.book { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.notice {
+  padding: 10px 14px; border-radius: 8px; font-size: 14px; margin-bottom: 14px;
+  border: 1px solid #cbd5e1; background: #f8fafc;
+}
+.notice.ok { border-color: #86efac; background: #f0fdf4; }
+.notice.warn { border-color: #fcd34d; background: #fffbeb; }
+.notice.err { border-color: #fca5a5; background: #fef2f2; }
+.hidden { display: none; }
+.chart-wrap { overflow-x: auto; }

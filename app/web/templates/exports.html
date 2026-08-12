@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Экспорт{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h2>Экспорт для YouTube и Telegram</h2>
+  <p class="muted">
+    Автоматической публикации нет и не будет: файлы только создаются, выкладывает их оператор вручную.
+    Каталог сохранения: <code>{{ export_dir }}</code>.
+  </p>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
+    <a class="btn secondary" href="/api/export/csv">CSV — раунды и решения</a>
+    <a class="btn secondary" href="/api/export/daily-scoreboard">CSV — дневной scoreboard</a>
+    <a class="btn secondary" href="/api/export/json">JSON — полный дамп</a>
+    <a class="btn secondary" href="/api/export/report" target="_blank">HTML-отчёт</a>
+    <a class="btn secondary" href="/api/export/chart.svg" target="_blank">SVG — график банков</a>
+    <button onclick="act('/api/export/write', undefined, 'Файлы сохранены в EXPORT_DIR', false)">
+      Сохранить весь комплект на диск
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Что входит в комплект</h2>
+  <ul>
+    <li>таблица результатов по раундам (CSV) — действия, вероятности, edge, ставки, исполнение;</li>
+    <li>дневной scoreboard (CSV) — банки участников по дням;</li>
+    <li>полный JSON — scoreboard, статистика, расхождения, крупнейшие движения;</li>
+    <li>HTML-отчёт с графиком банков — можно открыть и снять экраном;</li>
+    <li>SVG-график динамики банков.</li>
+  </ul>
+</div>
+{% endblock %}
