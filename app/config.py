@@ -152,6 +152,11 @@ class Settings(BaseSettings):
 
     initial_bankroll_usdc: float = 1000.0
 
+    # Сколько секунд после создания раунда блокировать повторное создание по
+    # тому же рынку. Защита от двойного клика: второй снимок обесценивает
+    # решения, над которыми модели уже работают.
+    round_create_cooldown_seconds: int = 30
+
     paper_fee_bps: int = 0
     paper_allow_partial_fill: bool = True
 

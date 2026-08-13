@@ -164,3 +164,38 @@ def test_cancel_round(db: Session, seeded, market: Market):
     # после отмены можно создать новый раунд по тому же рынку
     new_round = rounds_service.create_round(db, market, Phase.PREMATCH)
     assert isinstance(new_round, Round)
+
+
+# --- запрет дублей раундов --------------------------------------------------
+def test_second_round_blocked_while_first_awaits_approval(db: Session, market: Market):
+    """Раунд в AWAITING_APPROVAL всё ещё живой — второй по тому же рынку нельзя.
+
+    Раньше проверка смотрела только OPEN и LOCKED, из-за чего оператор открывал
+    дубль, а решения первого раунда сгорали как устаревшие.
+    """
+    first = rounds_service.create_round(db, market, Phase.PREMATCH)
+    first.status = RoundStatus.AWAITING_APPROVAL.value
+    db.flush()
+
+    with pytest.raises(rounds_service.RoundStateError, match="уже идёт раунд"):
+        rounds_service.create_round(db, market, Phase.PREMATCH)
+
+
+def test_double_click_is_blocked_by_cooldown(db: Session, market: Market):
+    """Повторное нажатие сразу после исполненного раунда — почти наверняка промах."""
+    first = rounds_service.create_round(db, market, Phase.PREMATCH)
+    first.status = RoundStatus.EXECUTED.value
+    db.flush()
+
+    with pytest.raises(rounds_service.RoundStateError, match="двойного нажатия"):
+        rounds_service.create_round(db, market, Phase.PREMATCH)
+
+
+def test_cancelled_round_does_not_block_new_one(db: Session, market: Market):
+    """Отмена — осознанное действие: после неё раунд создаётся сразу."""
+    first = rounds_service.create_round(db, market, Phase.PREMATCH)
+    rounds_service.cancel_round(db, first, "передумал")
+    db.flush()
+
+    second = rounds_service.create_round(db, market, Phase.PREMATCH)
+    assert second.id != first.id

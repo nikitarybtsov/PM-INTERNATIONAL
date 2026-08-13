@@ -95,18 +95,58 @@ def create_round(
     note: str | None = None,
     actor: str = "operator",
 ) -> Round:
-    """Шаги 1–2: зафиксировать snapshot и открыть раунд."""
-    open_round = db.scalar(
+    """Шаги 1–2: зафиксировать snapshot и открыть раунд.
+
+    Второй раунд по тому же рынку недопустим: новый снимок обесценивает решения
+    предыдущего (risk engine отклонит их как устаревшие), и работа моделей
+    пропадает впустую. Именно так сгорели заявки, пока Codex и Claude думали.
+    """
+    active = db.scalar(
         select(Round).where(
             Round.market_id == market.id,
-            Round.status.in_([RoundStatus.OPEN.value, RoundStatus.LOCKED.value]),
+            Round.status.in_(
+                [
+                    RoundStatus.OPEN.value,
+                    RoundStatus.LOCKED.value,
+                    # раунд ждёт одобрения оператора — он всё ещё живой
+                    RoundStatus.AWAITING_APPROVAL.value,
+                ]
+            ),
         )
     )
-    if open_round is not None:
+    if active is not None:
         raise RoundStateError(
-            f"по рынку {market.external_id} уже идёт раунд #{open_round.id} "
-            f"в статусе {open_round.status}"
+            f"по рынку {market.external_id} уже идёт раунд #{active.id} "
+            f"в статусе {active.status}. Завершите или отмените его."
         )
+
+    # Защита от двойного клика по кнопке. Отмена раунда под неё не подпадает:
+    # это осознанное действие оператора, после него сразу можно начать заново.
+    cooldown = get_settings().round_create_cooldown_seconds
+    if cooldown > 0:
+        # Только та же фаза: переход PREMATCH → BETWEEN_MAPS после конца карты
+        # и повтор после отмены — осознанные действия, их блокировать нельзя.
+        recent = db.scalar(
+            select(Round)
+            .where(
+                Round.market_id == market.id,
+                Round.phase == phase.value,
+                Round.status != RoundStatus.CANCELLED.value,
+            )
+            .order_by(Round.id.desc())
+            .limit(1)
+        )
+        if recent is not None and recent.created_at is not None:
+            created = recent.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            age = (datetime.now(UTC) - created).total_seconds()
+            if age < cooldown:
+                raise RoundStateError(
+                    f"раунд #{recent.id} по этому рынку создан {age:.0f} с назад. "
+                    f"Повторное создание доступно через {cooldown - age:.0f} с — "
+                    f"это защита от случайного двойного нажатия."
+                )
 
     if phase == Phase.BETWEEN_MAPS and map_number is None:
         raise ValueError("для фазы BETWEEN_MAPS укажите номер завершённой карты")
