@@ -51,6 +51,7 @@ PAYLOAD_FILES = [
     "pyproject.toml",
     "requirements.txt",
     "requirements-dev.txt",
+    "requirements-live.txt",
     ".env.example",
     "README.md",
     "RUNBOOK.md",
