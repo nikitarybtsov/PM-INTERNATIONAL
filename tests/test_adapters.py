@@ -484,3 +484,94 @@ def test_titan_wrap_manual_produces_result():
     result = TitanManualAdapter.wrap_manual(decision)
     assert result.model_name == "human:titan"
     assert result.decision.action == Action.HOLD
+
+
+# --- пики из живой трансляции ----------------------------------------------
+def test_draft_matches_teams_despite_name_differences(monkeypatch):
+    """У Valve и Polymarket названия расходятся: «Nigma Galaxy » с пробелом."""
+    from app.services import draft as draft_service
+
+    live = [
+        {
+            "team_name_radiant": "Nigma Galaxy ",
+            "team_name_dire": "Iron Wing",
+            "game_time": 300,
+            "delay": 10,
+            "league_id": 19719,
+            "players": (
+                [{"hero_id": i, "team": 0} for i in range(1, 6)]
+                + [{"hero_id": i, "team": 1} for i in range(6, 11)]
+            ),
+        }
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/heroes"):
+            return httpx.Response(
+                200, json=[{"id": i, "localized_name": f"Hero{i}"} for i in range(1, 11)]
+            )
+        return httpx.Response(200, json=live)
+
+    real_client = httpx.Client  # до подмены, иначе рекурсия
+    monkeypatch.setattr(
+        draft_service.httpx, "Client",
+        lambda **kw: real_client(transport=httpx.MockTransport(handler)),
+    )
+    draft_service._HERO_CACHE.clear()
+
+    found = draft_service.fetch_draft("Nigma Galaxy", "Iron Wing")
+    assert found is not None
+    assert found.radiant_picks == [f"Hero{i}" for i in range(1, 6)]
+    assert found.is_complete
+
+
+def test_draft_prefers_the_newest_game_of_the_series(monkeypatch):
+    """В эфире две карты серии: нужна та, чей драфт только закончился."""
+    from app.services import draft as draft_service
+
+    def game(seconds: int, offset: int) -> dict:
+        return {
+            "team_name_radiant": "BoomBoys",
+            "team_name_dire": "OG",
+            "game_time": seconds,
+            "delay": 10,
+            "players": (
+                [{"hero_id": i + offset, "team": 0} for i in range(1, 6)]
+                + [{"hero_id": i + offset, "team": 1} for i in range(6, 11)]
+            ),
+        }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/heroes"):
+            return httpx.Response(
+                200, json=[{"id": i, "localized_name": f"Hero{i}"} for i in range(1, 30)]
+            )
+        return httpx.Response(200, json=[game(2600, 0), game(220, 10)])
+
+    real_client = httpx.Client  # до подмены, иначе рекурсия
+    monkeypatch.setattr(
+        draft_service.httpx, "Client",
+        lambda **kw: real_client(transport=httpx.MockTransport(handler)),
+    )
+    draft_service._HERO_CACHE.clear()
+
+    found = draft_service.fetch_draft("BoomBoys", "OG")
+    assert found.game_time == 220, "взята доигрывающаяся карта вместо новой"
+    assert found.radiant_picks[0] == "Hero11"
+
+
+def test_draft_returns_none_when_match_not_live(monkeypatch):
+    from app.services import draft as draft_service
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/heroes"):
+            return httpx.Response(200, json=[])
+        return httpx.Response(200, json=[])
+
+    real_client = httpx.Client  # до подмены, иначе рекурсия
+    monkeypatch.setattr(
+        draft_service.httpx, "Client",
+        lambda **kw: real_client(transport=httpx.MockTransport(handler)),
+    )
+    draft_service._HERO_CACHE.clear()
+    assert draft_service.fetch_draft("A", "B") is None

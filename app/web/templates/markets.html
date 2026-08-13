@@ -66,6 +66,9 @@
         </p>
         <label for="map-no-{{ m.id }}">Номер карты</label>
         <input id="map-no-{{ m.id }}" type="number" min="1" max="5" value="1">
+        <button class="secondary" style="margin:6px 0" onclick="pullDraft({{ m.id }})">
+          Подтянуть пики из эфира
+        </button>
         <label for="picks-a-{{ m.id }}">Пики {{ m.team_a or 'команды A' }}</label>
         <input id="picks-a-{{ m.id }}" placeholder="напр.: Mars, Lion, Storm, Juggernaut, Tiny">
         <label for="picks-b-{{ m.id }}">Пики {{ m.team_b or 'команды B' }}</label>
@@ -110,6 +113,30 @@ async function createRound(marketId) {
   try {
     const result = await api("/api/rounds", { method: "POST", body: JSON.stringify(body) });
     window.location.href = `/ui/rounds/${result.round_id}`;
+  } catch (err) {
+    flash(err.message, "err");
+  }
+}
+
+async function pullDraft(marketId) {
+  // Valve отдаёт составы через ~10 секунд после драфта — набирать руками незачем.
+  try {
+    const data = await api(`/api/markets/${marketId}/draft`);
+    if (!data.found) {
+      flash(data.message, "err");
+      return;
+    }
+    // Radiant/Dire у Valve не совпадают с YES/NO рынка: раскладываем по названиям.
+    const teamA = document.querySelector(`#picks-a-${marketId}`).previousElementSibling.textContent;
+    const norm = (x) => (x || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const aIsRadiant = norm(teamA).includes(norm(data.radiant_team)) ||
+                       norm(data.radiant_team).includes(norm(teamA.replace(/^Пики /, "")));
+    const first = aIsRadiant ? data.radiant_picks : data.dire_picks;
+    const second = aIsRadiant ? data.dire_picks : data.radiant_picks;
+    document.getElementById(`picks-a-${marketId}`).value = first.join(", ");
+    document.getElementById(`picks-b-${marketId}`).value = second.join(", ");
+    const mins = Math.floor(data.game_time / 60);
+    flash(`Пики загружены. Карта идёт ${mins} мин, задержка эфира ${data.delay} с.`);
   } catch (err) {
     flash(err.message, "err");
   }

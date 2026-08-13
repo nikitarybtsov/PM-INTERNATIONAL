@@ -157,3 +157,38 @@ def settle(market_id: int, payload: SettleRequest, db: Session = Depends(get_db)
 @router.post("/seed")
 def seed(payload: SeedRequest, db: Session = Depends(get_db)) -> dict:
     return seed_service.seed_all(db, with_markets=payload.with_markets)
+
+
+@router.get("/{market_id}/draft")
+def live_draft(market_id: int, db: Session = Depends(get_db)) -> dict:
+    """Пики текущей карты из живой трансляции.
+
+    Оператору не нужно набирать составы руками: Valve отдаёт их с задержкой
+    около 10 секунд после драфта.
+    """
+    from app.services import draft as draft_service
+
+    market = db.get(Market, market_id)
+    if market is None:
+        raise HTTPException(status_code=404, detail="рынок не найден")
+    if not market.team_a or not market.team_b:
+        raise HTTPException(status_code=422, detail="у рынка не заданы команды")
+
+    found = draft_service.fetch_draft(market.team_a, market.team_b)
+    if found is None:
+        return {
+            "found": False,
+            "message": (
+                f"матч {market.team_a} — {market.team_b} не найден в эфире "
+                f"или драфт ещё не закончен"
+            ),
+        }
+    return {
+        "found": True,
+        "radiant_team": found.radiant_team,
+        "dire_team": found.dire_team,
+        "radiant_picks": found.radiant_picks,
+        "dire_picks": found.dire_picks,
+        "game_time": found.game_time,
+        "delay": found.delay,
+    }
