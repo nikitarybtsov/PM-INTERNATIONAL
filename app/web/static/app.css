@@ -297,7 +297,19 @@ pre {
   color: #7fb3e8;
   margin-bottom: 6px;
 }
-.live-box table td { padding: 5px 2px; border-bottom: 1px solid #16293f; font-size: 13px; }
+.live-box table { width: 100%; border-collapse: collapse; }
+.live-box table td {
+  padding: 6px 2px;
+  border-bottom: 1px solid #24405f;
+  font-size: 13px;
+  color: #cbd9ea;              /* подписи: раньше наследовали тёмный и пропадали */
+}
+.live-box table td.num, .live-box table td:last-child {
+  text-align: right;
+  color: #ffffff;              /* значения — максимальный контраст */
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 .live-box table tr:last-child td { border-bottom: none; }
 .live-warn {
   margin-top: 8px;
@@ -308,4 +320,13 @@ pre {
   font-size: 12.5px;
   line-height: 1.45;
 }
-.live-addr { margin-top: 7px; font-size: 11.5px; font-family: ui-monospace, monospace; }
+.live-addr { margin-top: 7px; color: #8fa8c4; font-size: 11.5px; font-family: ui-monospace, monospace; }
+.live-note {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #16304a;
+  color: #a9c6e4;
+  font-size: 12.5px;
+  line-height: 1.45;
+}

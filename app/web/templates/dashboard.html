@@ -54,7 +54,11 @@
             </b></td></tr>
         <tr><td>Открытых позиций</td><td class="num">{{ live.positions|length }}</td></tr>
       </table>
-      {% if live.equity_usdc is not none and (live.equity_usdc - p.equity)|abs > 1 %}
+      {% if p.participant == 'titan' %}
+        {# Титан торгует руками со своего кошелька: расчётного банка у него нет,
+           сравнивать не с чем — показываем только факт. #}
+        <div class="live-note">Торгует самостоятельно — это его реальные сделки.</div>
+      {% elif live.equity_usdc is not none and (live.equity_usdc - p.equity)|abs > 1 %}
         <div class="live-warn">
           Расходится с расчётным на {{ '%.2f'|format(live.equity_usdc - p.equity) }} $ —
           часть заявок не дошла до биржи.

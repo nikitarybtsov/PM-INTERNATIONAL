@@ -255,6 +255,43 @@ def round_executed(db: Session, round_row: Round, report: dict) -> bool:
     return _send("".join(blocks))
 
 
+
+def live_order_filled(
+    db: Session,
+    round_row: Round,
+    participant_key: str,
+    *,
+    outcome: str,
+    size: float,
+    price: float,
+    order_id: str | None,
+    market_title: str | None = None,
+) -> bool:
+    """Ордер реально исполнен на бирже.
+
+    Отдельное сообщение, а не строка в отчёте раунда: это единственное событие,
+    после которого на кошельке действительно меняются деньги, и оператор должен
+    узнать о нём сразу, а не найти в сводке.
+    """
+    market = db.get(Market, round_row.market_id)
+    title = market_title or (market.title if market else "")
+    notional = size * price
+    lines = [
+        "✅ <b>Ставка исполнена на Polymarket</b>",
+        _esc(title),
+        "",
+        f"Участник: <b>{_esc(participant_key.upper())}</b>",
+        f"Исход: <b>{_esc(outcome)}</b>",
+        f"Объём: <b>{size:.2f}</b> контрактов по <b>{price:.4f}</b>",
+        f"Сумма: <b>{notional:.2f} USDC</b>",
+    ]
+    if order_id:
+        lines.append(f"Ордер: <code>{_esc(order_id[:24])}</code>")
+    lines.append("")
+    lines.append("💰 Деньги списаны с кошелька. Позиция открыта.")
+    return _send("\n".join(lines))
+
+
 def market_settled(db: Session, market: Market, winning_outcome: str) -> bool:
     board = stats_service.scoreboard(db)
     label = market.yes_label if winning_outcome == "YES" else market.no_label

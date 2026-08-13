@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -502,6 +503,19 @@ def _send_live_order(db: Session, decision, outcome, execution, participant):
         "участник %s: ордер %s исполнен на %.4f @ %.4f",
         participant.key, result.order_id, result.filled_size, result.avg_price,
     )
+    with contextlib.suppress(Exception):  # уведомление не должно ломать сделку
+        from app.services import notifications
+
+        notifications.live_order_filled(
+            db,
+            decision.round,
+            participant.key,
+            outcome=outcome.outcome,
+            size=result.filled_size,
+            price=result.avg_price,
+            order_id=result.order_id,
+            market_title=market.title,
+        )
     return result
 
 
