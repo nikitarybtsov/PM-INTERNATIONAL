@@ -280,8 +280,21 @@ def prepare(round_id: int, db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/{round_id}/decisions/{participant_key}/approve")
-def approve(round_id: int, participant_key: str, db: Session = Depends(get_db)) -> dict:
-    """Оператор одобряет заявку участника к исполнению."""
+def approve(
+    round_id: int,
+    participant_key: str,
+    execute: bool = True,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Одобрить заявку и сразу её исполнить.
+
+    Исполнение по умолчанию: пауза между «одобрил» и «исполнил» означает, что
+    ордер уходит по цене, которой на рынке уже нет. Разделение на два шага
+    имело смысл, пока сделки были бумажными.
+
+    `execute=false` оставляет прежнее поведение — пометить и исполнить позже
+    всё разом кнопкой «Исполнить одобренные».
+    """
     row = _get_round(db, round_id)
     try:
         decision = rounds_service.approve_decision(db, row, participant_key)
@@ -289,11 +302,25 @@ def approve(round_id: int, participant_key: str, db: Session = Depends(get_db)) 
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {
+
+    result: dict = {
         "participant": participant_key,
         "approved_by": decision.approved_by,
         "approved_at": decision.approved_at,
+        "executed": False,
     }
+    if not execute:
+        return result
+
+    try:
+        report = rounds_service.execute_participant(db, row, participant_key)
+    except rounds_service.RoundStateError as exc:
+        # Одобрение уже записано — сообщаем, но не откатываем его.
+        result["error"] = str(exc)
+        return result
+
+    result.update({"executed": True, "execution": report})
+    return result
 
 
 @router.delete("/{round_id}/decisions/{participant_key}/approve")

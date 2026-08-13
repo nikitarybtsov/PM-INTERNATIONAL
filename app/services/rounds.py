@@ -35,7 +35,14 @@ from app.constants import (
     Phase,
     RoundStatus,
 )
-from app.db.models import Decision, Market, Participant, Round, Snapshot
+from app.db.models import (
+    Decision,
+    Market,
+    Participant,
+    Round,
+    SimulatedOrder,
+    Snapshot,
+)
 from app.schemas.decision import TradeDecision, TradeDecisionInput
 from app.schemas.snapshot import MarketSnapshot
 from app.services import audit, paper_engine, risk_engine, snapshots
@@ -189,8 +196,14 @@ def existing_decision(db: Session, round_id: int, participant_id: int) -> Decisi
     )
 
 
-def decisions_for(db: Session, round_id: int) -> list[Decision]:
-    return list(db.scalars(select(Decision).where(Decision.round_id == round_id)))
+def decisions_for(
+    db: Session, round_id: int, *, participant_key: str | None = None
+) -> list[Decision]:
+    """Решения раунда. `participant_key` — только заявка одного участника."""
+    query = select(Decision).where(Decision.round_id == round_id)
+    if participant_key is not None:
+        query = query.join(Participant).where(Participant.key == participant_key)
+    return list(db.scalars(query))
 
 
 def submitted_keys(db: Session, round_id: int) -> set[str]:
@@ -607,7 +620,13 @@ def prepare_round(db: Session, round_row: Round, *, actor: str = "operator") -> 
     return proposals
 
 
-def execute_round(db: Session, round_row: Round, *, actor: str = "operator") -> dict:
+def execute_round(
+    db: Session,
+    round_row: Round,
+    *,
+    actor: str = "operator",
+    only_participant: str | None = None,
+) -> dict:
     """Шаги 5–7: валидация, risk engine, исполнение.
 
     В боевом режиме исполняются ТОЛЬКО заявки, одобренные оператором;
@@ -630,7 +649,7 @@ def execute_round(db: Session, round_row: Round, *, actor: str = "operator") -> 
     snapshot_model = snapshots.load_snapshot_model(snapshot_row)
     report: dict[str, dict] = {}
 
-    for decision in decisions_for(db, round_row.id):
+    for decision in decisions_for(db, round_row.id, participant_key=only_participant):
         participant = db.get(Participant, decision.participant_id)
         ctx = risk_engine.build_context(db, decision, snapshot_row, snapshot_model, participant)
         outcome = risk_engine.evaluate(ctx)
@@ -693,8 +712,11 @@ def execute_round(db: Session, round_row: Round, *, actor: str = "operator") -> 
             )
         report[participant.key] = entry
 
-    round_row.status = RoundStatus.EXECUTED.value
-    round_row.executed_at = datetime.now(UTC)
+    # Точечное исполнение оставляет раунд открытым: остальные заявки ещё
+    # ждут решения оператора. Раунд закрывается, когда обработаны все.
+    if only_participant is None or _all_decisions_settled(db, round_row):
+        round_row.status = RoundStatus.EXECUTED.value
+        round_row.executed_at = datetime.now(UTC)
     db.flush()
     audit.record(
         db,
@@ -705,6 +727,31 @@ def execute_round(db: Session, round_row: Round, *, actor: str = "operator") -> 
         after=report,
     )
     return report
+
+
+
+def _all_decisions_settled(db: Session, round_row: Round) -> bool:
+    """Все заявки раунда либо исполнены, либо ставить по ним нечего."""
+    for decision in decisions_for(db, round_row.id):
+        if decision.action in (None, "HOLD"):
+            continue
+        if decision.approved_by is None:
+            return False
+        order = db.scalar(
+            select(SimulatedOrder).where(SimulatedOrder.decision_id == decision.id)
+        )
+        if order is None:
+            return False
+    return True
+
+
+def execute_participant(db: Session, round_row: Round, participant_key: str) -> dict:
+    """Исполнить заявку одного участника немедленно.
+
+    Нужно, чтобы одобрение и отправка ордера были одним действием: пауза между
+    ними означает, что ордер уходит по цене, которой на рынке уже нет.
+    """
+    return execute_round(db, round_row, only_participant=participant_key)
 
 
 def reveal_round(db: Session, round_row: Round, *, actor: str = "operator") -> Round:

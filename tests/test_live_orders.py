@@ -166,3 +166,67 @@ def test_paper_mode_never_touches_exchange(
     rounds_service.execute_round(db, round_row)
 
     assert fake.requests == [], "в бумажном режиме кто-то обратился к бирже"
+
+
+def test_approve_executes_immediately(
+    db: Session, seeded, market: Market, live_mode, monkeypatch, client
+):
+    """Одобрение и отправка ордера — одно действие.
+
+    Раньше кнопка только помечала заявку, а исполняла отдельная. Оператор
+    одобрял и уходил, ордер не уходил вовсе; а если нажимал вторую кнопку —
+    ордер уходил по цене, которой на рынке уже не было.
+    """
+    market.yes_token_id = "token-yes-123"
+    db.flush()
+    fake = _FakeAdapter()
+    monkeypatch.setattr(rounds_service, "get_execution_adapter", lambda: fake)
+
+    round_row = rounds_service.create_round(db, market, Phase.PREMATCH)
+    rounds_service.request_ai_decisions(db, round_row)
+    for decision in rounds_service.decisions_for(db, round_row.id):
+        decision.action = "BUY_YES"
+        decision.stake_usdc = 50.0
+        decision.max_acceptable_price = 0.95
+        decision.payload = {
+            **(decision.payload or {}),
+            "action": "BUY_YES",
+            "stake_usdc": 50.0,
+            "max_acceptable_price": 0.95,
+        }
+    db.commit()
+
+    response = client.post(f"/api/rounds/{round_row.id}/decisions/codex/approve")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["executed"] is True, "одобрение не привело к исполнению"
+    assert len(fake.requests) == 1, "на биржу ушла не одна заявка"
+    assert fake.requests[0].participant == "codex"
+
+
+def test_approving_one_leaves_round_open_for_others(
+    db: Session, seeded, market: Market, live_mode, monkeypatch, client
+):
+    """Исполнение одной заявки не должно закрывать раунд для второй."""
+    market.yes_token_id = "token-yes-123"
+    db.flush()
+    monkeypatch.setattr(rounds_service, "get_execution_adapter", lambda: _FakeAdapter())
+
+    round_row = rounds_service.create_round(db, market, Phase.PREMATCH)
+    rounds_service.request_ai_decisions(db, round_row)
+    for decision in rounds_service.decisions_for(db, round_row.id):
+        decision.action = "BUY_YES"
+        decision.stake_usdc = 50.0
+        decision.max_acceptable_price = 0.95
+        decision.payload = {
+            **(decision.payload or {}),
+            "action": "BUY_YES",
+            "stake_usdc": 50.0,
+            "max_acceptable_price": 0.95,
+        }
+    db.commit()
+
+    client.post(f"/api/rounds/{round_row.id}/decisions/codex/approve")
+    second = client.post(f"/api/rounds/{round_row.id}/decisions/claude/approve")
+    assert second.status_code == 200, "вторую заявку одобрить уже нельзя"
+    assert second.json()["executed"] is True
