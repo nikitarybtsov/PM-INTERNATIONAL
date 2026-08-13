@@ -329,3 +329,43 @@ def test_fee_is_applied(db: Session, market: Market, monkeypatch):
     assert result.fee == pytest.approx(1.0)
     assert pf.get_portfolio(db, participant.id).cash_balance == pytest.approx(899.0)
     reset_settings_cache()
+
+
+# --- несостоявшиеся карты ---------------------------------------------------
+def test_split_settlement_pays_half_to_both_sides(db: Session, market: Market):
+    """Карты не было — обе стороны гасятся по 0.50, а не возвращаются по цене входа.
+
+    Купленный дороже 0.50 контракт теряет разницу: вход по 0.72 вернёт 0.50.
+    Именно так закрываются рынки третьей карты при счёте 2:0 в серии.
+    """
+    round_row, snap, model, decision, participant = prepare(db, market, [(0.72, 1000.0)])
+    paper_engine.execute(
+        db, decision=decision, risk=buy_outcome(72.0, 100.0, 0.72),
+        snapshot_row=snap, snapshot_model=model,
+    )
+    before = pf.get_portfolio(db, participant.id).cash_balance
+
+    settlement.settle_market(db, market, "SPLIT")
+
+    # 100 контрактов × 0.50 = 50 при вложенных 72 → минус 22
+    assert pf.get_portfolio(db, participant.id).cash_balance == pytest.approx(before + 50.0)
+    position = pf.get_position(db, participant.id, market.id, "YES")
+    assert position.realized_pnl == pytest.approx(-22.0)
+
+
+def test_split_is_profitable_below_fifty_cents(db: Session, market: Market):
+    """Вход дешевле 0.50 приносит прибыль: 0.24 вернутся как 0.50."""
+    round_row, snap, model, decision, participant = prepare(db, market, [(0.24, 1000.0)])
+    paper_engine.execute(
+        db, decision=decision, risk=buy_outcome(24.0, 100.0, 0.24),
+        snapshot_row=snap, snapshot_model=model,
+    )
+    settlement.settle_market(db, market, "SPLIT")
+
+    position = pf.get_position(db, participant.id, market.id, "YES")
+    assert position.realized_pnl == pytest.approx(26.0)
+
+
+def test_settlement_rejects_unknown_outcome(db: Session, market: Market):
+    with pytest.raises(ValueError, match="YES, NO или SPLIT"):
+        settlement.settle_market(db, market, "MAYBE")

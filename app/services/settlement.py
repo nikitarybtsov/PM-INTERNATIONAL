@@ -2,6 +2,11 @@
 
 Результат вводится оператором вручную (`winning_outcome` = YES | NO).
 Победивший исход гасится по 1.00 USDC за контракт, проигравший — по 0.00.
+
+Отдельный случай — SPLIT: событие не состоялось, и Polymarket гасит ОБЕ
+стороны по 0.50. Так закрываются рынки третьей карты, если серия закончилась
+2:0. Деньги при этом не возвращаются по цене покупки: контракт, купленный по
+0.72, принесёт 0.50 — минус 22 цента, а купленный по 0.24 даст плюс 26.
 """
 
 from __future__ import annotations
@@ -27,8 +32,8 @@ def settle_market(
     actor: str = "operator",
     note: str | None = None,
 ) -> Settlement:
-    if winning_outcome not in ("YES", "NO"):
-        raise ValueError("winning_outcome должен быть YES или NO")
+    if winning_outcome not in ("YES", "NO", "SPLIT"):
+        raise ValueError("winning_outcome должен быть YES, NO или SPLIT")
 
     existing = db.scalar(select(Settlement).where(Settlement.market_id == market.id))
     if existing is not None:
@@ -51,7 +56,12 @@ def settle_market(
         )
     )
     for pos in positions:
-        payout = money(pos.size * (1.0 if pos.outcome == winning_outcome else 0.0))
+        # SPLIT — событие не состоялось: обе стороны по 0.50 за контракт.
+        if winning_outcome == "SPLIT":
+            unit_payout = 0.5
+        else:
+            unit_payout = 1.0 if pos.outcome == winning_outcome else 0.0
+        payout = money(pos.size * unit_payout)
         realized = money(payout - pos.cost_basis)
         pos.realized_pnl = money(pos.realized_pnl + realized)
         pos.status = PositionStatus.SETTLED.value
