@@ -27,6 +27,43 @@
             {{ p.forecast.log_loss if p.forecast.log_loss is not none else '—' }}
           </td></tr>
     </table>
+
+    {% set live = live_portfolios.get(p.participant) %}
+    {% if live %}
+    <div class="live-box">
+      <div class="live-head">Фактически на Polymarket</div>
+      {% if live.error %}
+        <div class="muted">биржа не ответила: {{ live.error[:60] }}</div>
+      {% else %}
+      <table>
+        <tr><td>Свободный USDC</td>
+            <td class="num">
+              {% if live.cash_usdc is not none %}{{ '%.2f'|format(live.cash_usdc) }}
+              {% else %}—{% endif %}
+            </td></tr>
+        <tr><td>В позициях</td>
+            <td class="num">
+              {% if live.positions_value_usdc is not none %}
+                {{ '%.2f'|format(live.positions_value_usdc) }}
+              {% else %}—{% endif %}
+            </td></tr>
+        <tr><td><b>Итого на бирже</b></td>
+            <td class="num"><b>
+              {% if live.equity_usdc is not none %}{{ '%.2f'|format(live.equity_usdc) }} $
+              {% else %}—{% endif %}
+            </b></td></tr>
+        <tr><td>Открытых позиций</td><td class="num">{{ live.positions|length }}</td></tr>
+      </table>
+      {% if live.equity_usdc is not none and (live.equity_usdc - p.equity)|abs > 1 %}
+        <div class="live-warn">
+          Расходится с расчётным на {{ '%.2f'|format(live.equity_usdc - p.equity) }} $ —
+          часть заявок не дошла до биржи.
+        </div>
+      {% endif %}
+      {% endif %}
+      <div class="muted live-addr">{{ live.address[:10] }}…{{ live.address[-6:] }}</div>
+    </div>
+    {% endif %}
   </div>
   {% endfor %}
 </div>

@@ -279,3 +279,33 @@ pre {
 
 /* Выделение мышью не должно делать текст нечитаемым */
 ::selection { background: #2f6fd0; color: #ffffff; }
+
+/* --- фактический портфель на бирже -------------------------------------- */
+/* Расчётный банк показывает то, что записано у нас. Если ордер не дошёл,
+   числа расходятся — расхождение должно бросаться в глаза. */
+.live-box {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #10233a;
+  border: 1px solid #1e3a5c;
+}
+.live-head {
+  font-size: 12px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #7fb3e8;
+  margin-bottom: 6px;
+}
+.live-box table td { padding: 5px 2px; border-bottom: 1px solid #16293f; font-size: 13px; }
+.live-box table tr:last-child td { border-bottom: none; }
+.live-warn {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: #3a2415;
+  color: #f0b47a;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.live-addr { margin-top: 7px; font-size: 11.5px; font-family: ui-monospace, monospace; }

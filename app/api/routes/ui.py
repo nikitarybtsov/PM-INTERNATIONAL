@@ -62,6 +62,15 @@ def _base_context(request: Request) -> dict:
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
     board = stats_service.scoreboard(db)
+
+    # В боевом режиме источник истины — биржа. Расчётный банк показывает то,
+    # что мы записали у себя; если ордер не дошёл, эти числа расходятся, и
+    # оператор должен видеть расхождение, а не узнавать о нём постфактум.
+    live_portfolios: dict = {}
+    if get_settings().live_execution_ready():
+        from app.services import live_portfolio
+
+        live_portfolios = live_portfolio.fetch_all()
     recent = []
     for row in db.scalars(select(Round).order_by(Round.id.desc()).limit(15)):
         market = db.get(Market, row.market_id)
@@ -91,6 +100,7 @@ def dashboard(request: Request, db: Session = Depends(get_db)) -> HTMLResponse:
             "board": board,
             "recent_rounds": recent,
             "open_positions": positions,
+            "live_portfolios": live_portfolios,
             "chart_svg": export_service.equity_chart_svg(db),
             "disagreements": stats_service.disagreements(db, limit=5),
         },
