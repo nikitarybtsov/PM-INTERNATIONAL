@@ -42,9 +42,32 @@ class LivePortfolio:
 
     @property
     def equity_usdc(self) -> float | None:
-        if self.cash_usdc is None and self.positions_value_usdc is None:
+        """Итог по бирже. None, если данных не хватает.
+
+        Свободный USDC виден только через торговый ключ: Polymarket держит его
+        во внутреннем учёте, на самом адресе баланс нулевой, а публичного
+        эндпоинта нет. У Титана ключа нет, поэтому итог для него не считается —
+        показывать сумму без наличных значило бы врать.
+        """
+        if self.cash_usdc is None or self.positions_value_usdc is None:
             return None
-        return round((self.cash_usdc or 0.0) + (self.positions_value_usdc or 0.0), 2)
+        return round(self.cash_usdc + self.positions_value_usdc, 2)
+
+    @property
+    def open_positions(self) -> list[dict]:
+        """Позиции, которые ещё чего-то стоят.
+
+        В выдаче лежат и давно рассчитанные рынки с нулевой стоимостью — на
+        кошельках, где раньше работали другие боты, их десятки.
+        """
+        live = []
+        for position in self.positions:
+            try:
+                if float(position.get("value") or 0) > 0.01:
+                    live.append(position)
+            except (TypeError, ValueError):
+                continue
+        return live
 
 
 def _address_for(participant: str) -> str | None:

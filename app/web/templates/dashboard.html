@@ -39,7 +39,7 @@
         <tr><td>Свободный USDC</td>
             <td class="num">
               {% if live.cash_usdc is not none %}{{ '%.2f'|format(live.cash_usdc) }}
-              {% else %}—{% endif %}
+              {% else %}<span class="muted">не виден</span>{% endif %}
             </td></tr>
         <tr><td>В позициях</td>
             <td class="num">
@@ -47,17 +47,19 @@
                 {{ '%.2f'|format(live.positions_value_usdc) }}
               {% else %}—{% endif %}
             </td></tr>
+        {% if live.equity_usdc is not none %}
         <tr><td><b>Итого на бирже</b></td>
-            <td class="num"><b>
-              {% if live.equity_usdc is not none %}{{ '%.2f'|format(live.equity_usdc) }} $
-              {% else %}—{% endif %}
-            </b></td></tr>
-        <tr><td>Открытых позиций</td><td class="num">{{ live.positions|length }}</td></tr>
+            <td class="num"><b>{{ '%.2f'|format(live.equity_usdc) }} $</b></td></tr>
+        {% endif %}
+        <tr><td>Открытых позиций</td><td class="num">{{ live.open_positions|length }}</td></tr>
       </table>
       {% if p.participant == 'titan' %}
         {# Титан торгует руками со своего кошелька: расчётного банка у него нет,
            сравнивать не с чем — показываем только факт. #}
-        <div class="live-note">Торгует самостоятельно — это его реальные сделки.</div>
+        <div class="live-note">
+          Торгует самостоятельно — это его реальные сделки. Свободный остаток
+          виден только по торговому ключу, поэтому здесь лишь стоимость позиций.
+        </div>
       {% elif live.equity_usdc is not none and (live.equity_usdc - p.equity)|abs > 1 %}
         <div class="live-warn">
           Расходится с расчётным на {{ '%.2f'|format(live.equity_usdc - p.equity) }} $ —
