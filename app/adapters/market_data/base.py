@@ -32,6 +32,10 @@ class MarketRef:
     yes_label: str = "YES"
     no_label: str = "NO"
     starts_at: datetime | None = None
+    # Идентификаторы токенов исходов на CLOB. Без них ордер отправить нельзя:
+    # биржа торгует не «рынком», а конкретным токеном YES или NO.
+    yes_token_id: str | None = None
+    no_token_id: str | None = None
     raw: dict = field(default_factory=dict)
 
 

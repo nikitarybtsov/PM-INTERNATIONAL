@@ -66,6 +66,9 @@ def upsert_market(db: Session, ref: MarketRef) -> Market:
     market.event_title = ref.event_title
     market.tournament = ref.tournament
     market.market_type = ref.market_type
+    # без токенов боевой ордер отправить нельзя
+    market.yes_token_id = ref.yes_token_id or market.yes_token_id
+    market.no_token_id = ref.no_token_id or market.no_token_id
     market.team_a = ref.team_a
     market.team_b = ref.team_b
     market.yes_label = ref.yes_label

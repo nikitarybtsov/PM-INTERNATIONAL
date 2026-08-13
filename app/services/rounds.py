@@ -422,6 +422,71 @@ def _maybe_lock(db: Session, round_row: Round) -> None:
 
 
 # ---------------------------------------------------------------------------
+def get_execution_adapter():
+    """Адаптер боевого исполнения. Отдельная функция — чтобы подменять в тестах."""
+    from app.adapters.execution import PolymarketLiveAdapter
+
+    return PolymarketLiveAdapter()
+
+
+def _send_live_order(db: Session, decision, outcome, execution, participant):
+    """Отправить реальный ордер на Polymarket и записать его идентификатор.
+
+    Токен исхода берётся у рынка, на который участник действительно ставит —
+    он может отличаться от рынка раунда, если выбран соседний.
+    """
+    from app.adapters.execution import ExecutionError, OrderRequest
+
+    # Выбранный рынок лежит в payload решения — так же, как его читает
+    # paper_engine. Отдельной колонки у Decision нет.
+    market_id = (decision.payload or {}).get("target_market_id") or execution.order.market_id
+    market = db.get(Market, market_id)
+    if market is None:
+        raise ExecutionError(f"рынок #{market_id} не найден")
+
+    token_id = market.yes_token_id if outcome.outcome == "YES" else market.no_token_id
+    if not token_id:
+        raise ExecutionError(
+            f"у рынка «{market.title[:40]}» нет token_id исхода {outcome.outcome}: "
+            f"обновите список рынков, чтобы подтянуть токены"
+        )
+
+    request = OrderRequest(
+        participant=participant.key,
+        market_id=market.id,
+        token_id=token_id,
+        outcome=outcome.outcome,
+        size=execution.filled_size,
+        max_price=outcome.max_acceptable_price or execution.avg_price,
+        approved_by=decision.approved_by,
+        # Один ордер на решение: повтор исполнения не создаст второй.
+        idempotency_key=f"decision-{decision.id}",
+    )
+    result = get_execution_adapter().execute(request)
+
+    decision.live_order_id = result.order_id
+    db.flush()
+    audit.record(
+        db,
+        entity_type="decision",
+        entity_id=decision.id,
+        action="live_order",
+        actor="system",
+        after={
+            "order_id": result.order_id,
+            "filled_size": result.filled_size,
+            "avg_price": result.avg_price,
+            "status": getattr(result.status, "value", str(result.status)),
+        },
+        note="ордер отправлен на Polymarket",
+    )
+    logger.info(
+        "участник %s: ордер %s исполнен на %.4f @ %.4f",
+        participant.key, result.order_id, result.filled_size, result.avg_price,
+    )
+    return result
+
+
 def approve_decision(
     db: Session, round_row: Round, participant_key: str, *, actor: str = "operator"
 ) -> Decision:
@@ -598,6 +663,22 @@ def execute_round(db: Session, round_row: Round, *, actor: str = "operator") -> 
         except paper_engine.DuplicateExecution as exc:
             entry["error"] = str(exc)
             execution = None
+
+        # Боевой режим: после записи в свою книгу отправляем ордер на биржу.
+        # Симуляция остаётся источником учёта (позиции, PnL, статистика), а
+        # биржа — источником факта: order_id и реальный филл.
+        if live and execution is not None and execution.filled_size > 0:
+            try:
+                order = _send_live_order(db, decision, outcome, execution, participant)
+                entry["live_order_id"] = order.order_id
+                entry["live_filled_size"] = order.filled_size
+                entry["live_avg_price"] = order.avg_price
+            except Exception as exc:  # noqa: BLE001 — отказ биржи не рушит раунд
+                entry["live_error"] = str(exc)
+                logger.error(
+                    "раунд #%s, участник %s: ордер не ушёл на биржу — %s",
+                    round_row.id, participant.key, exc,
+                )
         if execution is not None:
             entry.update(
                 {

@@ -112,6 +112,10 @@ def test_paper_engine_never_reaches_network():
 
 def test_private_keys_confined_to_execution_layer():
     """Ключи читаются только конфигом и адаптером исполнения."""
+    # Единственные места, где приватный ключ вообще упоминается: конфигурация,
+    # которая его читает из окружения, и слой исполнения, который им подписывает.
+    # Раньше здесь стояли пути app/adapters/execution/*, которых не существовало —
+    # тест «проходил», охраняя пустоту.
     allowed = {
         Path("app/config.py"),
         Path("app/adapters/execution/polymarket_live.py"),

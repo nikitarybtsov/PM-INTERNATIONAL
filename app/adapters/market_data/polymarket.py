@@ -195,6 +195,11 @@ class PolymarketDataProvider(MarketDataProvider):
 
         team_a = str(outcomes[0]) if len(outcomes) > 0 else None
         team_b = str(outcomes[1]) if len(outcomes) > 1 else None
+
+        # Токены исходов: именно они торгуются на CLOB, рынок сам по себе нет.
+        tokens = _as_list(raw.get("clobTokenIds"))
+        yes_token = str(tokens[0]) if len(tokens) > 0 else None
+        no_token = str(tokens[1]) if len(tokens) > 1 else None
         return MarketRef(
             source=self.name,
             external_id=str(raw.get("id") or raw.get("conditionId") or raw.get("slug")),
@@ -207,6 +212,8 @@ class PolymarketDataProvider(MarketDataProvider):
             team_b=team_b,
             yes_label=team_a or "YES",
             no_label=team_b or "NO",
+            yes_token_id=yes_token,
+            no_token_id=no_token,
             starts_at=_parse_dt(
                 raw.get("gameStartTime")
                 or raw.get("startDate")

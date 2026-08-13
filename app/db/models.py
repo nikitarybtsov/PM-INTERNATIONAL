@@ -113,6 +113,9 @@ class Market(Base, TimestampMixin):
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default=MarketStatus.OPEN.value)
     operator_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Токены исходов на CLOB — то, что реально покупается на бирже
+    yes_token_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    no_token_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     __table_args__ = (UniqueConstraint("source", "external_id", name="uq_market_source_ext"),)
 
