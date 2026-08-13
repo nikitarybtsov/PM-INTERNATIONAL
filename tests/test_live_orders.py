@@ -230,3 +230,65 @@ def test_approving_one_leaves_round_open_for_others(
     second = client.post(f"/api/rounds/{round_row.id}/decisions/claude/approve")
     assert second.status_code == 200, "вторую заявку одобрить уже нельзя"
     assert second.json()["executed"] is True
+
+
+def test_sdk_is_called_with_args_object_not_kwargs(live_mode, monkeypatch):
+    """SDK принимает объект аргументов, а не именованные параметры.
+
+    Вызов с kwargs падал с TypeError: create_and_post_market_order() got an
+    unexpected keyword argument 'token_id'. Ни один ордер не доходил до биржи,
+    а в отчёте это выглядело как «исполнено 0.0000 @ 0.0000».
+    """
+    from app.adapters.execution import OrderRequest
+    from app.adapters.execution.polymarket_live import PolymarketLiveAdapter
+
+    captured: dict = {}
+
+    class _Client:
+        def create_and_post_market_order(self, *args, **kwargs):
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+            return {"orderID": "0xOK", "makingAmount": "10"}
+
+    adapter = PolymarketLiveAdapter(client_factory=lambda wallet: _Client())
+    adapter.execute(
+        OrderRequest(
+            participant="codex",
+            market_id=1,
+            token_id="tok",
+            outcome="YES",
+            size=100.0,
+            max_price=0.5,
+            approved_by="operator",
+        )
+    )
+
+    assert "token_id" not in captured.get("kwargs", {}), (
+        "SDK вызван с kwargs — на живой бирже это TypeError"
+    )
+    assert captured.get("args"), "объект аргументов не передан позиционно"
+
+
+def test_failed_order_is_not_reported_as_success(
+    db: Session, seeded, market: Market, live_mode, monkeypatch
+):
+    """Отказ биржи обязан быть виден, а не превращаться в «исполнено 0.0000»."""
+    market.yes_token_id = "token-yes-123"
+    db.flush()
+
+    class _Rejecting:
+        def execute(self, request):
+            return OrderResult(status=OrderStatus.FAILED, error="TypeError: плохой вызов")
+
+        def balance_usdc(self, participant):
+            return 1000.0
+
+    monkeypatch.setattr(rounds_service, "get_execution_adapter", lambda: _Rejecting())
+
+    round_row = rounds_service.create_round(db, market, Phase.PREMATCH)
+    rounds_service.request_ai_decisions(db, round_row)
+    _make_bets(db, round_row)
+    report = rounds_service.execute_round(db, round_row)
+
+    assert any("live_error" in e for e in report.values()), "отказ биржи потерялся"
+    assert not db.query(Decision).filter(Decision.live_order_id.is_not(None)).all()

@@ -180,13 +180,23 @@ class PolymarketLiveAdapter(ExecutionAdapter):
 
         client = self._client_for(request.participant)
         try:
-            response = client.create_and_post_market_order(
-                token_id=request.token_id,
-                amount=request.size,
-                price=price,
-                side="BUY",
-                order_type=settings.execution_taker_order_type,
+            # SDK принимает объект аргументов, а не именованные параметры:
+            # вызов с kwargs падал с TypeError, и ни один ордер не доходил.
+            from py_clob_client_v2.clob_types import MarketOrderArgsV2, OrderType
+
+            order_type = (
+                OrderType.FAK
+                if settings.execution_taker_order_type == "FAK"
+                else OrderType.FOK
             )
+            args = MarketOrderArgsV2(
+                token_id=str(request.token_id),
+                amount=float(request.size),
+                side="BUY",
+                price=float(price),
+                order_type=order_type,
+            )
+            response = client.create_and_post_market_order(args, order_type=order_type)
         except Exception as exc:  # noqa: BLE001 — любая ошибка биржи фиксируется
             logger.exception("ордер %s отклонён", request.participant)
             return OrderResult(

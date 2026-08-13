@@ -477,6 +477,11 @@ def _send_live_order(db: Session, decision, outcome, execution, participant):
     )
     result = get_execution_adapter().execute(request)
 
+    # Адаптер возвращает отказ объектом, а не исключением. Без этой проверки
+    # неудача выглядела как «исполнено 0.0000 @ 0.0000» и терялась в отчёте.
+    if not result.is_success or (result.order_id is None and not result.dry_run):
+        raise ExecutionError(result.error or "биржа не приняла ордер")
+
     decision.live_order_id = result.order_id
     db.flush()
     audit.record(
