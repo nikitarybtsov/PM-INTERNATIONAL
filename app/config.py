@@ -127,6 +127,12 @@ class Settings(BaseSettings):
     # за 30 дней — на банке $1 000 недостижимо, поэтому по умолчанию 0.
     polymarket_taker_rebate_rate: float = 0.0
     # Ограничения биржи: меньше минимума ордер отклоняется, цена кратна тику.
+    # Polymarket геоблокирует торговлю по IP: POST ордера с европейского
+    # сервера возвращает 403 «Trading restricted in your region». Чтение
+    # рынков при этом работает — блокируется именно торговля.
+    # SDK создаёт httpx.Client(trust_env=True) и берёт прокси из окружения,
+    # поэтому значение прокидывается в HTTPS_PROXY/HTTP_PROXY при старте.
+    polymarket_proxy_url: str | None = Field(default=None, repr=False)
     polymarket_min_order_usdc: float = 5.0
     polymarket_price_tick: float = 0.01
 

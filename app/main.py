@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -76,6 +77,13 @@ async def lifespan(app: FastAPI):
         else "DRY-RUN" if settings.live_trading_enabled
         else "PAPER"
     )
+    # Прокси для торговых запросов: без него Polymarket отвечает 403 по
+    # региону. SDK читает переменные окружения, явного параметра у него нет.
+    if settings.polymarket_proxy_url:
+        os.environ.setdefault("HTTPS_PROXY", settings.polymarket_proxy_url)
+        os.environ.setdefault("HTTP_PROXY", settings.polymarket_proxy_url)
+        logger.info("торговые запросы идут через прокси (обход геоблокировки)")
+
     logger.info(
         "старт: провайдер=%s, codex=%s, claude=%s, исполнение=%s",
         settings.market_data_provider,
