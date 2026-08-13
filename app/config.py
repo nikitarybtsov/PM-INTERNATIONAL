@@ -47,6 +47,12 @@ class WalletConfig:
     funder: str | None
     signature_type: int
     chain_id: int = 137
+    # Готовые L2-креды CLOB. Если заданы — используются как есть; иначе
+    # выводятся из приватного ключа при старте. Хранить их выгодно: биржа
+    # отвечает 400 «Could not create api key», если ключ уже существует.
+    api_key: str | None = None
+    api_secret: str | None = None
+    api_passphrase: str | None = None
 
     def __repr__(self) -> str:  # pragma: no cover - защита от случайного логирования
         return (
@@ -174,9 +180,15 @@ class Settings(BaseSettings):
     codex_poly_private_key: str | None = Field(default=None, repr=False)
     codex_poly_funder: str | None = None
     codex_poly_signature_type: int = 3
+    codex_poly_api_key: str | None = Field(default=None, repr=False)
+    codex_poly_api_secret: str | None = Field(default=None, repr=False)
+    codex_poly_passphrase: str | None = Field(default=None, repr=False)
     claude_poly_private_key: str | None = Field(default=None, repr=False)
     claude_poly_funder: str | None = None
     claude_poly_signature_type: int = 1
+    claude_poly_api_key: str | None = Field(default=None, repr=False)
+    claude_poly_api_secret: str | None = Field(default=None, repr=False)
+    claude_poly_passphrase: str | None = Field(default=None, repr=False)
     # Кошелёк Титана — только для чтения его сделок, ключ не нужен.
     titan_poly_address: str | None = None
 
@@ -234,12 +246,20 @@ class Settings(BaseSettings):
         funder = getattr(self, f"{prefix}_poly_funder", None)
         if not key or not str(key).strip():
             return None
+
+        def _opt(name: str) -> str | None:
+            value = getattr(self, f"{prefix}_poly_{name}", None)
+            return str(value).strip() or None if value else None
+
         return WalletConfig(
             participant=prefix,
             private_key=str(key).strip(),
             funder=(str(funder).strip() or None) if funder else None,
             signature_type=int(getattr(self, f"{prefix}_poly_signature_type", 1)),
             chain_id=self.polymarket_chain_id,
+            api_key=_opt("api_key"),
+            api_secret=_opt("api_secret"),
+            api_passphrase=_opt("passphrase"),
         )
 
     def live_execution_ready(self) -> bool:

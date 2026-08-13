@@ -116,6 +116,36 @@ def cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+
+def cmd_derive_creds(_: argparse.Namespace) -> int:
+    """Вывести L2-креды CLOB — один раз, чтобы записать их в .env.
+
+    Биржа отвечает 400 «Could not create api key», если ключ для адреса уже
+    создан, а SDK пытается создавать его при каждом старте. Разовый вывод и
+    запись в .env снимают вопрос навсегда.
+
+    Сама работа с ключом идёт в слое исполнения: сюда возвращаются только
+    готовые креды.
+    """
+    from app.adapters.execution import PolymarketLiveAdapter
+
+    adapter = PolymarketLiveAdapter()
+    for key in ("codex", "claude"):
+        try:
+            creds = adapter.derive_creds(key)
+        except Exception as exc:  # noqa: BLE001
+            print(f"{key}: не удалось получить креды — {str(exc)[:120]}")
+            continue
+        if not creds:
+            print(f"{key}: кошелёк не настроен или креды недоступны")
+            continue
+        print(f"\n# --- {key}: добавьте в .env ---")
+        print(f"{key.upper()}_POLY_API_KEY={creds['api_key']}")
+        print(f"{key.upper()}_POLY_API_SECRET={creds['api_secret']}")
+        print(f"{key.upper()}_POLY_PASSPHRASE={creds['api_passphrase']}\n")
+    return 0
+
+
 def cmd_export(_: argparse.Namespace) -> int:
     with session_scope() as db:
         files = export_service.write_all(db)
@@ -156,6 +186,9 @@ def main(argv: list[str] | None = None) -> int:
         help="результат рынка для расчёта (по умолчанию YES)",
     )
     demo.set_defaults(func=cmd_demo)
+    sub.add_parser(
+        "derive-creds", help="вывести L2-креды CLOB для кошельков (один раз)"
+    ).set_defaults(func=cmd_derive_creds)
     sub.add_parser("export", help="сохранить экспорт в EXPORT_DIR").set_defaults(func=cmd_export)
     sub.add_parser("status", help="краткий scoreboard").set_defaults(func=cmd_status)
 

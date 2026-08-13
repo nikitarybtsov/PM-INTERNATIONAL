@@ -55,6 +55,7 @@ class PolymarketLiveAdapter(ExecutionAdapter):
     # ---- клиент ------------------------------------------------------------
     def _build_client(self, wallet: WalletConfig):  # pragma: no cover - нужен SDK и сеть
         from py_clob_client_v2.client import ClobClient
+        from py_clob_client_v2.clob_types import ApiCreds
 
         client = ClobClient(
             host=CLOB_HOST,
@@ -63,8 +64,62 @@ class PolymarketLiveAdapter(ExecutionAdapter):
             signature_type=wallet.signature_type,
             funder=wallet.funder,
         )
-        client.set_api_creds(client.create_or_derive_api_key())
+
+        # Готовые L2-креды из окружения — предпочтительный путь: биржа отвечает
+        # 400 «Could not create api key», если ключ для адреса уже существует,
+        # а create_or_derive_api_key дёргает создание при каждом старте.
+        if wallet.api_key and wallet.api_secret and wallet.api_passphrase:
+            client.set_api_creds(
+                ApiCreds(
+                    api_key=wallet.api_key,
+                    api_secret=wallet.api_secret,
+                    api_passphrase=wallet.api_passphrase,
+                )
+            )
+            return client
+
+        # Кредов нет — выводим. Сначала derive (ключ уже создан), потом create.
+        creds = None
+        for method in ("derive_api_key", "create_or_derive_api_key", "create_api_key"):
+            fn = getattr(client, method, None)
+            if fn is None:
+                continue
+            try:
+                creds = fn()
+                break
+            except Exception as exc:  # noqa: BLE001 — пробуем следующий способ
+                logger.warning(
+                    "кошелёк %s: %s не сработал (%s)", wallet.participant, method, exc
+                )
+        if creds is None:
+            raise ExecutionError(
+                f"не удалось получить L2-креды для {wallet.participant}. "
+                f"Выведите их один раз командой `python -m app.cli derive-creds` "
+                f"и задайте {wallet.participant.upper()}_POLY_API_KEY/"
+                f"API_SECRET/PASSPHRASE в .env"
+            )
+        client.set_api_creds(creds)
+        logger.info("кошелёк %s: L2-креды выведены из приватного ключа", wallet.participant)
         return client
+
+    def derive_creds(self, participant: str) -> dict[str, str] | None:
+        """Разово получить L2-креды для кошелька — чтобы записать их в .env.
+
+        Живёт здесь, а не в CLI: приватный ключ не должен покидать слой
+        исполнения, это проверяется тестом.
+        """
+        wallet = self._settings.wallet_for(participant)
+        if wallet is None:
+            return None
+        client = self._client_factory(wallet)
+        creds = getattr(client, "creds", None)
+        if creds is None:
+            return None
+        return {
+            "api_key": getattr(creds, "api_key", ""),
+            "api_secret": getattr(creds, "api_secret", ""),
+            "api_passphrase": getattr(creds, "api_passphrase", ""),
+        }
 
     def _client_for(self, participant: str):
         if participant not in self._clients:
