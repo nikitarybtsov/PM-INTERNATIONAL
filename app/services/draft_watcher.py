@@ -157,12 +157,26 @@ def tick(db: Session) -> WatchResult:
             result.errors.append(f"{market.title[:40]}: {exc}")
             continue
 
-        if settings.auto_request_ai_on_snapshot:
-            try:
-                rounds_service.request_ai_decisions(db, round_row)
-                db.commit()
-            except Exception as exc:  # noqa: BLE001
-                db.rollback()
-                result.errors.append(f"модели по {market.title[:30]}: {exc}")
+        if not settings.auto_request_ai_on_snapshot:
+            continue
+
+        try:
+            rounds_service.request_ai_decisions(db, round_row)
+            db.commit()
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            result.errors.append(f"модели по {market.title[:30]}: {exc}")
+            continue
+
+        # Без просчёта заявок раунд остаётся в LOCKED, а уведомление с
+        # кнопками одобрения шлётся именно отсюда — иначе оператор видит
+        # только «начался драфт» и больше ничего.
+        try:
+            proposals = rounds_service.prepare_round(db, round_row, actor="draft-watcher")
+            db.commit()
+            notifications.approval_needed(db, round_row, proposals)
+        except Exception as exc:  # noqa: BLE001
+            db.rollback()
+            result.errors.append(f"просчёт по {market.title[:30]}: {exc}")
 
     return result
