@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.auth import auth_middleware
-from app.config import get_settings
+from app.config import get_settings, normalize_proxy_url
 from app.db.base import create_all, session_scope
 from app.services.seed import seed_participants
 
@@ -79,9 +79,10 @@ async def lifespan(app: FastAPI):
     )
     # Прокси для торговых запросов: без него Polymarket отвечает 403 по
     # региону. SDK читает переменные окружения, явного параметра у него нет.
-    if settings.polymarket_proxy_url:
-        os.environ.setdefault("HTTPS_PROXY", settings.polymarket_proxy_url)
-        os.environ.setdefault("HTTP_PROXY", settings.polymarket_proxy_url)
+    proxy = normalize_proxy_url(settings.polymarket_proxy_url)
+    if proxy:
+        os.environ.setdefault("HTTPS_PROXY", proxy)
+        os.environ.setdefault("HTTP_PROXY", proxy)
         logger.info("торговые запросы идут через прокси (обход геоблокировки)")
 
     logger.info(

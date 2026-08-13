@@ -63,6 +63,28 @@ class WalletConfig:
     __str__ = __repr__
 
 
+
+def normalize_proxy_url(raw: str | None) -> str | None:
+    """Привести прокси к виду http://user:pass@host:port.
+
+    Провайдеры выдают строку и как URL, и как `host:port:user:pass` — второй
+    формат httpx не понимает и молча игнорирует, а ордера продолжают уходить
+    с настоящего IP.
+    """
+    value = (raw or "").strip()
+    if not value:
+        return None
+    if "://" in value:
+        return value
+    parts = value.split(":")
+    if len(parts) == 4:
+        host, port, user, password = parts
+        return f"http://{user}:{password}@{host}:{port}"
+    if len(parts) == 2:
+        return f"http://{value}"
+    return value
+
+
 class RiskLimits(BaseSettings):
     """Детерминированные лимиты риск-движка. Одинаковы для всех участников."""
 
@@ -299,6 +321,8 @@ class Settings(BaseSettings):
     #: сюда его признак — иначе значение уедет в /api/config и в логи.
     SECRET_NAME_PARTS: ClassVar[tuple[str, ...]] = (
         "api_key", "secret", "token", "password", "passphrase", "private_key",
+        # URL прокси содержит логин и пароль — в /api/config он светил их целиком
+        "proxy_url",
     )
 
     def safe_dump(self) -> dict[str, object]:
