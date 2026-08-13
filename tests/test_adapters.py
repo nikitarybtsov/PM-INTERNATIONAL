@@ -575,3 +575,28 @@ def test_draft_returns_none_when_match_not_live(monkeypatch):
     )
     draft_service._HERO_CACHE.clear()
     assert draft_service.fetch_draft("A", "B") is None
+
+
+def test_watcher_skips_matches_already_in_progress(monkeypatch, db, seeded):
+    """Заявка после драфта бессмысленна, если карта уже идёт несколько минут."""
+    from app.services import draft as draft_service
+    from app.services import draft_watcher
+
+    draft_watcher.reset_state()
+    started: list[str] = []
+
+    running = draft_service.LiveDraft(
+        radiant_team="A", dire_team="B",
+        radiant_picks=[f"H{i}" for i in range(5)],
+        dire_picks=[f"H{i}" for i in range(5, 10)],
+        game_time=600,  # десять минут игры
+    )
+    monkeypatch.setattr(draft_service, "fetch_all_live", lambda **kw: [running])
+    monkeypatch.setattr(
+        draft_watcher.notifications, "draft_started",
+        lambda *a, **kw: started.append("sent") or True,
+    )
+
+    result = draft_watcher.tick(db)
+    assert result.rounds_opened == []
+    assert started == [], "уведомление ушло по идущей карте"

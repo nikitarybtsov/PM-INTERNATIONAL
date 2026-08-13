@@ -100,8 +100,15 @@ def tick(db: Session) -> WatchResult:
     settings = get_settings()
     checkpoints = _checkpoints()
 
+    max_game_time = settings.draft_max_game_time_seconds
+
     for live in draft_service.fetch_all_live():
         if not live.picks_total:
+            continue
+        # Карта уже идёт — ставка по ценам драфта неактуальна: рынок увидел и
+        # составы, и первые события. Раньше воркер присылал заявки через
+        # несколько минут после начала игры.
+        if live.game_time > max_game_time:
             continue
         market = _market_for(db, live)
         if market is None:

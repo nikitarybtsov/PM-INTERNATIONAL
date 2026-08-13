@@ -241,6 +241,11 @@ class Settings(BaseSettings):
     draft_watch_enabled: bool = False
     draft_watch_interval_seconds: int = 20
     draft_checkpoints: str = "4,8,10"
+    # Сколько секунд игрового времени ещё допустимо для ставки после драфта.
+    # Дальше карта уже идёт: рынок увидел составы и первые события, и заявка
+    # по ценам драфта не имеет смысла. У Valve game_time отрицательно до
+    # начала карты и растёт после, поэтому порог небольшой.
+    draft_max_game_time_seconds: int = 90
 
     # --- Автоматический планировщик раундов -------------------------------
     scheduler_enabled: bool = False
