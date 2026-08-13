@@ -146,6 +146,20 @@ def approval_needed(db: Session, round_row: Round, proposals: dict) -> bool:
     return _send("\n".join(lines))
 
 
+def draft_started(db: Session, market: Market, picks_count: int) -> bool:
+    """Драфт начался — у оператора есть несколько минут до старта карты."""
+    base = get_settings().public_base_url.rstrip("/")
+    text = (
+        f"🎭 <b>Начался драфт</b>\n"
+        f"{_esc(market.title)}\n\n"
+        f"Выбрано героев: <b>{picks_count} из 10</b>\n"
+        f"Модели анализируют составы по ходу пиков — пришлю заявки, "
+        f"когда драфт закончится.\n\n"
+        f"{base}/ui/round"
+    )
+    return _send(text)
+
+
 def draft_ready(db: Session, round_row: Round, best: dict | None = None) -> bool:
     """Раунд по фазе AFTER_DRAFT: пики известны, есть время до начала карты."""
     market = db.get(Market, round_row.market_id)

@@ -234,6 +234,14 @@ class Settings(BaseSettings):
     titan_access_token: str | None = Field(default=None, repr=False)
     public_base_url: str = "http://localhost:8000"
 
+    # --- Слежение за драфтом ----------------------------------------------
+    # Воркер смотрит матчи в эфире, ловит начало пиков и запрашивает модели на
+    # срезах. Больше трёх срезов не помещается: проход обеих моделей занимает
+    # 1-3 минуты, а драфт длится около пяти.
+    draft_watch_enabled: bool = False
+    draft_watch_interval_seconds: int = 20
+    draft_checkpoints: str = "4,8,10"
+
     # --- Автоматический планировщик раундов -------------------------------
     scheduler_enabled: bool = False
     scheduler_interval_seconds: int = 300

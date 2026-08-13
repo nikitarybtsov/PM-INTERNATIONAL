@@ -61,6 +61,31 @@ async def _scheduler_loop(stop: asyncio.Event) -> None:
             await asyncio.wait_for(stop.wait(), timeout=interval)
 
 
+async def _draft_watch_loop(stop: asyncio.Event) -> None:
+    """Слежение за драфтами. Тик короткий, поэтому интервал в секундах."""
+    from app.services import draft_watcher
+
+    settings = get_settings()
+    interval = max(10, settings.draft_watch_interval_seconds)
+    logger.info("слежение за драфтом запущено, интервал %sс", interval)
+
+    def _run_tick() -> dict:
+        with session_scope() as db:
+            return draft_watcher.tick(db).as_dict()
+
+    while not stop.is_set():
+        try:
+            result = await asyncio.to_thread(_run_tick)
+            if result["drafts_started"] or result["rounds_opened"]:
+                logger.info("драфт: %s", result)
+            for error in result.get("errors", []):
+                logger.warning("драфт-воркер: %s", error)
+        except Exception:  # noqa: BLE001 — цикл не имеет права умереть
+            logger.exception("сбой тика слежения за драфтом")
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -104,9 +129,11 @@ async def lifespan(app: FastAPI):
         )
 
     stop = asyncio.Event()
-    task: asyncio.Task | None = None
+    tasks: list[asyncio.Task] = []
     if settings.scheduler_enabled:
-        task = asyncio.create_task(_scheduler_loop(stop))
+        tasks.append(asyncio.create_task(_scheduler_loop(stop)))
+    if settings.draft_watch_enabled:
+        tasks.append(asyncio.create_task(_draft_watch_loop(stop)))
 
     with contextlib.suppress(Exception):
         from app.services import notifications
@@ -117,7 +144,7 @@ async def lifespan(app: FastAPI):
     yield
 
     stop.set()
-    if task is not None:
+    for task in tasks:
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task

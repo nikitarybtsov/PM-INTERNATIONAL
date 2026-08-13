@@ -65,9 +65,12 @@ def test_after_draft_phase_exists():
 def test_after_draft_hint_mentions_picks():
     from app.adapters.participants.prompting import _PHASE_HINTS
 
-    hint = _PHASE_HINTS["AFTER_DRAFT"]
-    assert "пики" in hint.lower()
-    assert "карта ещё не началась" in hint.lower()
+    hint = _PHASE_HINTS["AFTER_DRAFT"].lower()
+    assert "пики" in hint
+    # Между снимком и исполнением проходят минуты: рынок увидит те же пики и
+    # сдвинется. Без этого предупреждения модели ставят по цене, которой уже нет.
+    assert "цен" in hint
+    assert "max_acceptable_price" in hint
 
 
 # --- снимок несёт все рынки матча -------------------------------------------

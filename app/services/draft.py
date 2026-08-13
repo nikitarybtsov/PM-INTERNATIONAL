@@ -43,6 +43,19 @@ class LiveDraft:
     def is_complete(self) -> bool:
         return len(self.radiant_picks) == 5 and len(self.dire_picks) == 5
 
+    @property
+    def picks_total(self) -> int:
+        return len(self.radiant_picks) + len(self.dire_picks)
+
+    @property
+    def in_draft(self) -> bool:
+        """Пики идут: часть героев уже выбрана, но не все.
+
+        Valve отдаёт составы по мере выбора, поэтому промежуточное состояние
+        видно в реальном времени — на нём и строится анализ по ходу драфта.
+        """
+        return 0 < self.picks_total < 10
+
 
 def _norm(name: str | None) -> str:
     """«Nigma Galaxy » и «nigma galaxy» — одна команда."""
@@ -104,10 +117,49 @@ def fetch_draft(team_a: str, team_b: str, *, timeout: float = 20.0) -> LiveDraft
             delay=int(row.get("delay") or 0),
             league_id=int(row.get("league_id") or 0),
         )
-        if draft.is_complete:
+        if draft.picks_total:
             candidates.append(draft)
 
     if not candidates:
         return None
-    # Самая молодая игра — её драфт закончился только что.
+    # Самая молодая игра — её драфт идёт или только закончился.
     return min(candidates, key=lambda d: d.game_time)
+
+
+def fetch_all_live(*, timeout: float = 20.0) -> list[LiveDraft]:
+    """Все турнирные матчи в эфире — для слежения за началом драфтов."""
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+            live = client.get(f"{OPENDOTA}/live")
+            live.raise_for_status()
+            rows = live.json()
+            heroes = _heroes(client)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("список эфира не получен: %s", exc)
+        return []
+
+    out: list[LiveDraft] = []
+    for row in rows if isinstance(rows, list) else []:
+        if not row.get("league_id"):
+            continue
+        players = row.get("players") or []
+        out.append(
+            LiveDraft(
+                radiant_team=str(row.get("team_name_radiant") or ""),
+                dire_team=str(row.get("team_name_dire") or ""),
+                radiant_picks=[
+                    heroes.get(int(p["hero_id"]), str(p["hero_id"]))
+                    for p in players
+                    if p.get("hero_id") and p.get("team") == 0
+                ],
+                dire_picks=[
+                    heroes.get(int(p["hero_id"]), str(p["hero_id"]))
+                    for p in players
+                    if p.get("hero_id") and p.get("team") == 1
+                ],
+                game_time=int(row.get("game_time") or 0),
+                delay=int(row.get("delay") or 0),
+                league_id=int(row.get("league_id") or 0),
+            )
+        )
+    return out
