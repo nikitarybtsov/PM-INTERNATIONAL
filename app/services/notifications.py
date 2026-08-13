@@ -190,7 +190,23 @@ def round_executed(db: Session, round_row: Round, report: dict) -> bool:
         return False
 
     market = db.get(Market, round_row.market_id)
-    blocks = [f"📊 <b>Раунд #{round_row.id} исполнен</b>\n{_esc(market.title if market else '')}\n"]
+
+    # Заголовок называет то, что реально произошло с деньгами. «Раунд исполнен»
+    # читалось как «ставка сделана», хотя чаще всего обе модели говорят HOLD и
+    # никаких сделок нет — оператор пугался зря.
+    settings = get_settings()
+    traded = any(
+        (entry or {}).get("executed") and (entry or {}).get("filled_size")
+        for entry in report.values()
+    )
+    if not traded:
+        head = f"⚪️ <b>Раунд #{round_row.id}: сделок нет</b>"
+    elif settings.live_execution_ready():
+        head = f"💸 <b>Раунд #{round_row.id}: ставки отправлены на биржу</b>"
+    else:
+        head = f"📊 <b>Раунд #{round_row.id}: бумажные ставки</b>"
+
+    blocks = [f"{head}\n{_esc(market.title if market else '')}\n"]
 
     for decision in rounds_service.decisions_for(db, round_row.id):
         participant = db.get(Participant, decision.participant_id)
