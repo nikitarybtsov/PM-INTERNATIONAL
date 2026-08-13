@@ -201,6 +201,9 @@ def test_sell_realizes_pnl(db: Session, market: Market):
         payload_hash=sell_model.content_hash(), captured_at=sell_model.captured_at,
     )
     db.add(sell_snap)
+    # Первый раунд закрываем: живой раунд на рынок теперь может быть только
+    # один, это гарантирует уникальный индекс.
+    round_row.status = "EXECUTED"
     db.flush()
     sell_round = Round(
         market_id=market.id, snapshot_id=sell_snap.id, phase=Phase.PREMATCH.value, status="LOCKED"

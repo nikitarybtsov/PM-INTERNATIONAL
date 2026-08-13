@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -127,6 +127,31 @@ def markets_page(request: Request, db: Session = Depends(get_db)) -> HTMLRespons
     return templates.TemplateResponse(
         "markets.html", {**_base_context(request), "markets": markets}
     )
+
+
+@router.get("/ui/round", response_class=HTMLResponse)
+def latest_round(request: Request, db: Session = Depends(get_db)):
+    """Открыть раунд, который сейчас требует внимания.
+
+    Постоянный адрес, чтобы не искать номер и не править его в строке браузера.
+    Приоритет: ждёт одобрения → заперт → открыт → просто последний.
+    """
+    order = [
+        RoundStatus.AWAITING_APPROVAL.value,
+        RoundStatus.LOCKED.value,
+        RoundStatus.OPEN.value,
+    ]
+    for status in order:
+        row = db.scalar(
+            select(Round).where(Round.status == status).order_by(Round.id.desc()).limit(1)
+        )
+        if row is not None:
+            return RedirectResponse(f"/ui/rounds/{row.id}", status_code=302)
+
+    row = db.scalar(select(Round).order_by(Round.id.desc()).limit(1))
+    if row is None:
+        return RedirectResponse("/ui/rounds", status_code=302)
+    return RedirectResponse(f"/ui/rounds/{row.id}", status_code=302)
 
 
 @router.get("/ui/rounds/{round_id}", response_class=HTMLResponse)

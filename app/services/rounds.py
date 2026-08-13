@@ -23,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.adapters.participants import get_participant_adapter
@@ -170,7 +171,15 @@ def create_round(
         note=note,
     )
     db.add(round_row)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError as exc:
+        # Сработал уникальный индекс: параллельный запрос успел раньше.
+        db.rollback()
+        raise RoundStateError(
+            f"по рынку {market.external_id} только что открыли раунд в другом "
+            f"запросе — обновите страницу"
+        ) from exc
     audit.record(
         db,
         entity_type="round",

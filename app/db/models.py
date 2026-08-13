@@ -20,6 +20,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -170,6 +171,24 @@ class Round(Base, TimestampMixin):
     market: Mapped[Market] = relationship()
     snapshot: Mapped[Snapshot] = relationship()
     decisions: Mapped[list[Decision]] = relationship(back_populates="round")
+
+    # Один живой раунд на рынок — на уровне БД. Проверка в коде не спасает от
+    # гонки: два одновременных запроса читают базу до того, как первый успеет
+    # записаться, и оба видят «свободно». Так появились раунды #9 и #10 с
+    # разницей в 1.8 секунды, после чего решения первого сгорели как устаревшие.
+    __table_args__ = (
+        Index(
+            "ux_active_round_per_market",
+            "market_id",
+            unique=True,
+            sqlite_where=text(
+                "status IN ('OPEN', 'LOCKED', 'AWAITING_APPROVAL')"
+            ),
+            postgresql_where=text(
+                "status IN ('OPEN', 'LOCKED', 'AWAITING_APPROVAL')"
+            ),
+        ),
+    )
 
 
 class Decision(Base, TimestampMixin):
