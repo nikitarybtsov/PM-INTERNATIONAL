@@ -37,8 +37,16 @@ class FakeClient:
         self.raises = raises
         self.calls: list[dict] = []
 
-    def create_and_post_market_order(self, **kwargs):
-        self.calls.append(kwargs)
+    def create_and_post_market_order(self, args=None, **kwargs):
+        # SDK принимает объект аргументов позиционно; kwargs остались для
+        # order_type. Разворачиваем в плоский словарь, чтобы проверки в тестах
+        # читались так же, как раньше.
+        payload = dict(kwargs)
+        for field in ("token_id", "amount", "price", "side", "order_type"):
+            value = getattr(args, field, None)
+            if value is not None:
+                payload[field] = value
+        self.calls.append(payload)
         if self.raises:
             raise self.raises
         return self.response
