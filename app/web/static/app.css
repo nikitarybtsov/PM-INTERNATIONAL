@@ -330,3 +330,19 @@ pre {
   font-size: 12.5px;
   line-height: 1.45;
 }
+
+/* --- ставка после драфта ------------------------------------------------ */
+/* Отдельный блок, потому что это другой сценарий: пики известны, времени до
+   начала карты мало, и оператор должен ввести составы за считанные секунды. */
+.draft-box {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #1a1533;
+  border: 1px solid #33285c;
+}
+.draft-box h3 { margin: 0 0 4px; color: #c9b6ff; font-size: 15px; }
+.draft-box input { width: 100%; margin-bottom: 6px; }
+.draft-box label { display: block; margin-top: 6px; font-size: 12.5px; color: #b0a8cc; }
+.btn-draft { background: #6d4aff; }
+.btn-draft:hover { background: #7d5eff; }
